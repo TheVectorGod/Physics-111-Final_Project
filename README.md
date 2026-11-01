@@ -3,5 +3,5 @@ Physics-Based Inclined Plane Analysis and Force Estimation System for Manual Loa
 
 ---
 ## Requirements (VScode Setup)
-- Download [PlatformIO Extention] (https://marketplace.visualstudio.com/items?itemName=platformio.platformio-ide)
-- Download [Wokwi Simulator] (https://marketplace.visualstudio.com/items?itemName=Wokwi.wokwi-vscode)
+- Download [PlatformIO Extention](https://marketplace.visualstudio.com/items?itemName=platformio.platformio-ide)
+- Download [Wokwi Simulator](https://marketplace.visualstudio.com/items?itemName=Wokwi.wokwi-vscode)
