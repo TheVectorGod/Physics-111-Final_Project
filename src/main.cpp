@@ -78,20 +78,74 @@ double analogRange(int pin, double minValue, double maxValue) {
 
 
 //-------------------------------Christian------------------------------------
+// Updates input variables from potentiometers unless serial override is active
 void refreshKnobs() {
-  
+  if (serialOverride) return;
+
+  inputs.massKg  = analogRange(PIN_MASS, 1.0, MAX_MASS_KG);
+  inputs.riseM   = analogRange(PIN_RISE, 0.1, MAX_RISE_M);
+  inputs.maxRunM = analogRange(PIN_RUN, MIN_RUN_M, MAX_RUN_M);
+  inputs.muK     = analogRange(PIN_MU, 0.0, MAX_MU);
 }
 
+// Clears line and displays a 20-character string on the LCD
 void putLine(int row, String text) {
-  // Exactly one 20-character screen line; prevents LCD stale characters.
   while (text.length() < 20) text += " ";
   lcd.setCursor(0, row);
-  lcd.print(text.substring(0, 20));
+  lcd.print(text);
 }
 
 //-------------------------------Christian------------------------------------
+// Displays the current menu page based on screenIndex
 void showScreen() {
- 
+  if (!validInputs(inputs)) {
+    putLine(0, "   INPUT ERROR!   ");
+    putLine(1, "Out of valid bounds");
+    putLine(2, "Check potentiomtr");
+    putLine(3, "or serial inputs  ");
+    return;
+  }
+
+  switch (screenIndex) {
+    case 0: // Inputs Overview
+      putLine(0, "=== RAMP INPUTS ===");
+      putLine(1, "Mass:   " + String(inputs.massKg, 1) + " kg");
+      putLine(2, "Rise:   " + String(inputs.riseM, 2) + " m");
+      putLine(3, "Run:" + String(inputs.maxRunM, 2) + "m | u:" + String(inputs.muK, 2));
+      break;
+
+    case 1: // Best (Min) Force Result
+      putLine(0, "== MIN FORCE OPT ==");
+      putLine(1, "Run:" + String(best.runM, 2) + "m Deg:" + String(best.angleDeg, 1));
+      putLine(2, "Force:  " + String(best.appliedForceN, 2) + " N");
+      putLine(3, "Work:   " + String(best.workJ, 2) + " J");
+      break;
+
+    case 2: // Lowest Work Result
+      putLine(0, "== MIN WORK OPT ==");
+      putLine(1, "Run:" + String(lowestWork.runM, 2) + "m Deg:" + String(lowestWork.angleDeg, 1));
+      putLine(2, "Force:  " + String(lowestWork.appliedForceN, 2) + " N");
+      putLine(3, "Work:   " + String(lowestWork.workJ, 2) + " J");
+      break;
+
+    case 3: // Force Breakdown
+      putLine(0, "== FORCE VECTORS ==");
+      putLine(1, "F_par:  " + String(best.gravityParallelN, 2) + " N");
+      putLine(2, "Normal: " + String(best.normalN, 2) + " N");
+      putLine(3, "Fric:   " + String(best.kineticFrictionN, 2) + " N");
+      break;
+
+    case 4: // Geometry Breakdown
+      putLine(0, "== RAMP GEOMETRY ==");
+      putLine(1, "Length: " + String(best.slopeLengthM, 2) + " m");
+      putLine(2, "Run:    " + String(best.runM, 2) + " m");
+      putLine(3, "Angle:  " + String(best.angleDeg, 2) + " deg");
+      break;
+
+    default:
+      screenIndex = 0;
+      break;
+  }
 }
 
 // ------- Evidence output (for Chapter 4 numerical validation) -------
@@ -109,11 +163,26 @@ void printComparison() {
 
 
 //-------------------------------Christian------------------------------------
+// Exports all 101 candidate calculations to Serial in CSV format
 void printCSV() {
-  
+  if (!validInputs(inputs)) {
+    Serial.println("Error: Invalid inputs.");
+    return;
+  }
+
+  Serial.println("Index,Run_m,SlopeLen_m,Angle_deg,F_Parallel_N,F_Normal_N,F_Friction_N,AppliedForce_N,Work_J");
+
+  double step = (inputs.maxRunM - MIN_RUN_M) / (N_CANDIDATES - 1);
+
+  for (int i = 0; i < N_CANDIDATES; i++) {
+    double run = MIN_RUN_M + (i * step);
+    Calculation c = calculateAtRun(run);
+
+    Serial.println(String(i + 1) + "," + c.runM + "," + c.slopeLengthM + "," + 
+                   c.angleDeg + "," + c.gravityParallelN + "," + c.normalN + "," + 
+                   c.kineticFrictionN + "," + c.appliedForceN + "," + c.workJ);
+  }
 }
-
-
 
 //-------------------------------Cedric------------------------------------
 void selfTest() {
