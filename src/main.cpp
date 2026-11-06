@@ -186,8 +186,51 @@ void printCSV() {
 
 //-------------------------------Cedric------------------------------------
 void selfTest() {
-  // TODO member 3: expand to >= 12 independent comparison tests.
- 
+  struct Case { double m, h, run, mu; };
+  const Case cases[] = {
+    {10.0,   3.00,   4.0, 0.00},   // 3-4-5 triangle, no friction
+    {10.0,   3.00,   4.0, 0.50},   // 3-4-5 triangle, with friction
+    {30.0,   0.60,   4.0, 0.03},   // project default
+    {1.0,    1.00,   1.0, 0.00},   // 45 degrees
+    {500.0, 10.00, 100.0, 1.00},   // upper limits
+    {1.0,    0.10,   0.5, 0.00},   // lightest and shortest
+    {75.0,   1.20,   3.0, 0.25},
+    {50.0,   2.00,   0.5, 0.10},   // steep ramp
+    {120.0,  0.90,   6.0, 0.40},
+    {20.0,   0.45,   2.5, 0.00},
+    {250.0,  5.00,  20.0, 0.15},
+    {5.0,    0.30,   1.5, 0.60}
+  };
+  const int n = sizeof(cases) / sizeof(cases[0]);
+  const double TOL = 0.001;   // allowed difference
+  int passed = 0;
+
+  Serial.println("=== SELFTEST ===");
+  for (int i = 0; i < n; i++) {
+    const Case &t = cases[i];
+
+    // Run the project's calculation for this test case, then restore the real inputs
+    Inputs keep = inputs;
+    inputs = {t.m, t.h, t.run, t.mu};
+    Calculation c = calculateAtRun(t.run);
+    inputs = keep;
+
+    // Independent reference values (similar-triangle form)
+    double L     = sqrt(t.run * t.run + t.h * t.h);
+    double angle = atan2(t.h, t.run) * 180.0 / PI;
+    double force = t.m * G * (t.h + t.mu * t.run) / L;
+    double work  = t.m * G * (t.h + t.mu * t.run);
+
+    bool ok = fabs(c.slopeLengthM - L)      <= TOL &&
+              fabs(c.angleDeg - angle)      <= TOL &&
+              fabs(c.appliedForceN - force) <= TOL &&
+              fabs(c.workJ - work)          <= TOL;
+    if (ok) passed++;
+
+    Serial.printf("Test %2d: F=%.4f N (ref %.4f) W=%.4f J (ref %.4f) -> %s\n",
+                  i + 1, c.appliedForceN, force, c.workJ, work, ok ? "PASS" : "FAIL");
+  }
+  Serial.printf("RESULT: %d/%d passed (tolerance %.3f)\n", passed, n, TOL);
 }
 
 void help() {
@@ -204,7 +247,65 @@ void help() {
 
 //-------------------------------Cedric------------------------------------
 void handleCommand(String cmd) {
-  
+  cmd.trim();
+  cmd.toUpperCase();
+  if (cmd.length() == 0) return;
+
+  double a, b, c, d;
+
+  if (cmd.startsWith("SET")) {
+    if (sscanf(cmd.c_str() + 3, "%lf %lf %lf %lf", &a, &b, &c, &d) != 4) {
+      Serial.println("Usage: SET m h maxRun mu");
+      return;
+    }
+    Inputs t = {a, b, c, d};
+    if (!validInputs(t)) {
+      Serial.println("ERROR: invalid inputs.");
+      return;
+    }
+    inputs = t;
+    serialOverride = true;
+    optimize(inputs, best, lowestWork);
+    showScreen();
+    Serial.println("OK: inputs set. Type KNOBS to use the knobs again.");
+
+  } else if (cmd.startsWith("CALC")) {
+    if (sscanf(cmd.c_str() + 4, "%lf %lf %lf %lf", &a, &b, &c, &d) != 4) {
+      Serial.println("Usage: CALC m h run mu");
+      return;
+    }
+    Inputs t = {a, b, c, d};          // run is also used as maxRun for validation
+    if (!validInputs(t)) {
+      Serial.println("ERROR: invalid inputs.");
+      return;
+    }
+    Inputs keep = inputs;
+    inputs = t;
+    Calculation r = calculateAtRun(c);
+    inputs = keep;
+    printSingle(r);
+
+  } else if (cmd == "RUN") {
+    optimize(inputs, best, lowestWork);
+    printComparison();
+    printSingle(best);
+
+  } else if (cmd == "CSV") {
+    printCSV();
+
+  } else if (cmd == "SELFTEST") {
+    selfTest();
+
+  } else if (cmd == "KNOBS") {
+    serialOverride = false;
+    Serial.println("OK: knob inputs resumed.");
+
+  } else if (cmd == "HELP") {
+    help();
+
+  } else {
+    Serial.println("Unknown command. Type HELP.");
+  }
 }
 
 void setup() {
@@ -254,3 +355,4 @@ void loop() {
     showScreen();
   }
 }
+
