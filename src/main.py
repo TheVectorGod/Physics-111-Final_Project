@@ -122,41 +122,41 @@ class Tooltip:
  
 class RampForceApp(tk.Tk):
     def __init__(self):
-        # === MEMBER 4 — RampForceApp.__init__ ===
+        # === Christian — RampForceApp.__init__ ===
         # GOAL: Initialize the window, StringVars, state, fonts, style, tabs, bindings, and initial analysis.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 4: implement RampForceApp.__init__")
+        raise NotImplementedError("Christian: implement RampForceApp.__init__")
  
     # ------------------------------------------------------------------ fonts and style
     def _fonts(self):
-        # === MEMBER 3 — RampForceApp._fonts ===
+        # === Cedric — RampForceApp._fonts ===
         # GOAL: Create shared Tkinter font objects.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 3: implement RampForceApp._fonts")
+        raise NotImplementedError("Cedric: implement RampForceApp._fonts")
  
     def _apply_sizes(self):
-        # === MEMBER 3 — RampForceApp._apply_sizes ===
+        # === Cedric — RampForceApp._apply_sizes ===
         # GOAL: Apply current text size to Tk fonts and Treeview rows.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 3: implement RampForceApp._apply_sizes")
+        raise NotImplementedError("Cedric: implement RampForceApp._apply_sizes")
  
     def change_text_size(self, delta):
-        # === MEMBER 3 — RampForceApp.change_text_size ===
+        # === Cedric — RampForceApp.change_text_size ===
         # GOAL: Change/reset base font size; reapply sizes and refresh the display.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 3: implement RampForceApp.change_text_size")
+        raise NotImplementedError("Cedric: implement RampForceApp.change_text_size")
  
     def _style(self):
-        # === MEMBER 3 — RampForceApp._style ===
+        # === Cedric — RampForceApp._style ===
         # GOAL: Configure ttk theme, colors and named label/button styles.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 3: implement RampForceApp._style")
+        raise NotImplementedError("Cedric: implement RampForceApp._style")
  
     def _bind_keys(self):
-        # === MEMBER 3 — RampForceApp._bind_keys ===
+        # === Cedric — RampForceApp._bind_keys ===
         # GOAL: Connect Enter, Ctrl+Plus, Ctrl+Minus and Ctrl+0 shortcuts.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 3: implement RampForceApp._bind_keys")
+        raise NotImplementedError("Cedric: implement RampForceApp._bind_keys")
  
     # ------------------------------------------------------------------ building blocks
     def _field(self, parent, key):
@@ -182,37 +182,37 @@ class RampForceApp(tk.Tk):
  
     @staticmethod
     def _table(parent, columns):
-        # === MEMBER 3 — RampForceApp._table ===
+        # === Cedric — RampForceApp._table ===
         # GOAL: Create a ttk.Treeview with headings and horizontal/vertical scrollbars.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 3: implement RampForceApp._table")
+        raise NotImplementedError("Cedric: implement RampForceApp._table")
  
     @staticmethod
     def _text_box(parent, font):
-        # === MEMBER 2 — RampForceApp._text_box ===
+        # === Ace — RampForceApp._text_box ===
         # GOAL: Create a read-only, scrollable tkinter.Text widget.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 2: implement RampForceApp._text_box")
+        raise NotImplementedError("Ace: implement RampForceApp._text_box")
  
     @staticmethod
     def _set_text(widget, content):
-        # === MEMBER 2 — RampForceApp._set_text ===
+        # === Ace — RampForceApp._set_text ===
         # GOAL: Replace text in a read-only Text widget; highlight STEP headings.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 2: implement RampForceApp._set_text")
+        raise NotImplementedError("Ace: implement RampForceApp._set_text")
  
     def _rewrap(self, width):
-        # === MEMBER 4 — RampForceApp._rewrap ===
+        # === Christian — RampForceApp._rewrap ===
         # GOAL: Update long label wraplengths when the window resizes.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 4: implement RampForceApp._rewrap")
+        raise NotImplementedError("Christian: implement RampForceApp._rewrap")
  
     # ------------------------------------------------------------------ layout
     def _build(self):
-        # === MEMBER 4 — RampForceApp._build ===
+        # === Christian — RampForceApp._build ===
         # GOAL: Construct main header, side inputs and original five notebook tabs.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 4: implement RampForceApp._build")
+        raise NotImplementedError("Christian: implement RampForceApp._build")
  
     def _build_inputs(self, parent):
         side = ttk.Frame(parent, width=300)
@@ -289,46 +289,46 @@ class RampForceApp(tk.Tk):
         target.pack(fill="x", before=self.planning)
  
     def _card(self, parent, title):
-        # === MEMBER 2 — RampForceApp._card ===
+        # === Ace — RampForceApp._card ===
         # GOAL: Create one results card and return its display StringVars.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 2: implement RampForceApp._card")
+        raise NotImplementedError("Ace: implement RampForceApp._card")
  
     def _build_overview(self, page):
-        # === MEMBER 2 — RampForceApp._build_overview ===
+        # === Ace — RampForceApp._build_overview ===
         # GOAL: Build verdict, selection cards, ramp canvas, and custom-run checker.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 2: implement RampForceApp._build_overview")
+        raise NotImplementedError("Ace: implement RampForceApp._build_overview")
  
     def _on_check_return(self, _event=None):
-        # === MEMBER 3 — RampForceApp._on_check_return ===
+        # === Cedric — RampForceApp._on_check_return ===
         # GOAL: Run custom check and prevent global Enter handling from repeating analysis.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 3: implement RampForceApp._on_check_return")
+        raise NotImplementedError("Cedric: implement RampForceApp._on_check_return")
  
     def _build_comparison(self, page):
-        # === MEMBER 3 — RampForceApp._build_comparison ===
+        # === Cedric — RampForceApp._build_comparison ===
         # GOAL: Build Matplotlib plots, comparison controls, and ramp table.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 3: implement RampForceApp._build_comparison")
+        raise NotImplementedError("Cedric: implement RampForceApp._build_comparison")
  
     def _build_steps(self, page):
-        # === MEMBER 2 — RampForceApp._build_steps ===
+        # === Ace — RampForceApp._build_steps ===
         # GOAL: Build the How it was calculated tab using explain_steps.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 2: implement RampForceApp._build_steps")
+        raise NotImplementedError("Ace: implement RampForceApp._build_steps")
  
     def _build_references(self, page):
-        # === MEMBER 4 — RampForceApp._build_references ===
+        # === Christian — RampForceApp._build_references ===
         # GOAL: Build reference CSV import/fallback controls, table, and error summary.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 4: implement RampForceApp._build_references")
+        raise NotImplementedError("Christian: implement RampForceApp._build_references")
  
     def _build_models(self, page):
-        # === MEMBER 2 — RampForceApp._build_models ===
+        # === Ace — RampForceApp._build_models ===
         # GOAL: Show the preserved MODEL_TEXT explanation in a scrollable text box.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 2: implement RampForceApp._build_models")
+        raise NotImplementedError("Ace: implement RampForceApp._build_models")
  
     # ------------------------------------------------------------------ reading the boxes
     def _read_values(self):
@@ -365,104 +365,104 @@ class RampForceApp(tk.Tk):
  
     # ------------------------------------------------------------------ the one place inputs become results
     def run_analysis(self):
-        # === MEMBER 4 — RampForceApp.run_analysis ===
+        # === Christian — RampForceApp.run_analysis ===
         # GOAL: Coordinate validation, physics.analyze/sweep, text/cards/graph/table and stale-result prevention.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 4: implement RampForceApp.run_analysis")
+        raise NotImplementedError("Christian: implement RampForceApp.run_analysis")
  
     @staticmethod
     def _fill(vars_, texts):
-        # === MEMBER 2 — RampForceApp._fill ===
+        # === Ace — RampForceApp._fill ===
         # GOAL: Set display StringVars from the provided texts.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 2: implement RampForceApp._fill")
+        raise NotImplementedError("Ace: implement RampForceApp._fill")
  
     def _clear_results(self):
-        # === MEMBER 3 — RampForceApp._clear_results ===
+        # === Cedric — RampForceApp._clear_results ===
         # GOAL: Clear old verdict, data tables, graph and explanation when input is invalid.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 3: implement RampForceApp._clear_results")
+        raise NotImplementedError("Cedric: implement RampForceApp._clear_results")
  
     def _show_banner(self, level, icon, title, text):
-        # === MEMBER 2 — RampForceApp._show_banner ===
+        # === Ace — RampForceApp._show_banner ===
         # GOAL: Style the status banner and set icon, title and explanation text.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 2: implement RampForceApp._show_banner")
+        raise NotImplementedError("Ace: implement RampForceApp._show_banner")
  
     # ------------------------------------------------------------------ drawings
     def _draw_ramp(self):
-        # === MEMBER 2 — RampForceApp._draw_ramp ===
+        # === Ace — RampForceApp._draw_ramp ===
         # GOAL: Draw scaled ramp geometry, x and xmax labels on Tk Canvas.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 2: implement RampForceApp._draw_ramp")
+        raise NotImplementedError("Ace: implement RampForceApp._draw_ramp")
  
     def check_custom(self, quiet=False):
-        # === MEMBER 3 — RampForceApp.check_custom ===
+        # === Cedric — RampForceApp.check_custom ===
         # GOAL: Evaluate a custom run as metres or 1:N; show plain-language constraints and results.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 3: implement RampForceApp.check_custom")
+        raise NotImplementedError("Cedric: implement RampForceApp.check_custom")
  
     def _update_graphs(self):
-        # === MEMBER 3 — RampForceApp._update_graphs ===
+        # === Cedric — RampForceApp._update_graphs ===
         # GOAL: Draw steady/peak forces and work; handle infeasible cases with what-if data.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 3: implement RampForceApp._update_graphs")
+        raise NotImplementedError("Cedric: implement RampForceApp._update_graphs")
  
     def _update_table(self, which):
-        # === MEMBER 3 — RampForceApp._update_table ===
+        # === Cedric — RampForceApp._update_table ===
         # GOAL: Populate 101-run or standard-slope results with readable status values.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 3: implement RampForceApp._update_table")
+        raise NotImplementedError("Cedric: implement RampForceApp._update_table")
  
     # ------------------------------------------------------------------ files
     def _choose_file(self, filename, kind="csv", save=True):
-        # === MEMBER 4 — RampForceApp._choose_file ===
+        # === Christian — RampForceApp._choose_file ===
         # GOAL: Open a tkinter file chooser for CSV/PNG save or import.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 4: implement RampForceApp._choose_file")
+        raise NotImplementedError("Christian: implement RampForceApp._choose_file")
  
     def save_graph(self):
-        # === MEMBER 4 — RampForceApp.save_graph ===
+        # === Christian — RampForceApp.save_graph ===
         # GOAL: Save the Matplotlib figure as PNG and display status or file I/O errors.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 4: implement RampForceApp.save_graph")
+        raise NotImplementedError("Christian: implement RampForceApp.save_graph")
  
     def save_csv(self, kind):
-        # === MEMBER 4 — RampForceApp.save_csv ===
+        # === Christian — RampForceApp.save_csv ===
         # GOAL: Save candidate, summary or reference-comparison CSV using datasets.py functions.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 4: implement RampForceApp.save_csv")
+        raise NotImplementedError("Christian: implement RampForceApp.save_csv")
  
     def import_refs(self):
-        # === MEMBER 4 — RampForceApp.import_refs ===
+        # === Christian — RampForceApp.import_refs ===
         # GOAL: Choose a reference CSV to import.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 4: implement RampForceApp.import_refs")
+        raise NotImplementedError("Christian: implement RampForceApp.import_refs")
  
     def _load_supplied(self):
-        # === MEMBER 4 — RampForceApp._load_supplied ===
+        # === Christian — RampForceApp._load_supplied ===
         # GOAL: Load sample CSV from samples/ or use SUPPLIED_REFERENCE_CSV fallback.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 4: implement RampForceApp._load_supplied")
+        raise NotImplementedError("Christian: implement RampForceApp._load_supplied")
  
     def _load_refs(self, path):
-        # === MEMBER 4 — RampForceApp._load_refs ===
+        # === Christian — RampForceApp._load_refs ===
         # GOAL: Load/compare external CSV and show friendly errors.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 4: implement RampForceApp._load_refs")
+        raise NotImplementedError("Christian: implement RampForceApp._load_refs")
  
     def _show_references(self, rows):
-        # === MEMBER 4 — RampForceApp._show_references ===
+        # === Christian — RampForceApp._show_references ===
         # GOAL: Fill reference results table and compute mean absolute errors.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 4: implement RampForceApp._show_references")
+        raise NotImplementedError("Christian: implement RampForceApp._show_references")
  
  
 def _enable_sharp_text_on_windows():
-    # === MEMBER 4 — _enable_sharp_text_on_windows ===
+    # === Christian — _enable_sharp_text_on_windows ===
     # GOAL: Apply optional Windows DPI awareness; skip gracefully on non-Windows systems.
     # Keep function name/parameters/return contract unchanged.
-    raise NotImplementedError("Member 4: implement _enable_sharp_text_on_windows")
+    raise NotImplementedError("Christian: implement _enable_sharp_text_on_windows")
  
  
 if __name__ == "__main__":

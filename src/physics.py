@@ -79,24 +79,24 @@ class RampResult:
  
     @property
     def feasible(self) -> bool:
-        # === MEMBER 2 — RampResult.feasible ===
+        # === Ace — RampResult.feasible ===
         # GOAL: True only if space_ok, angle_ok and force_ok are all true.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 2: implement RampResult.feasible")
+        raise NotImplementedError("Ace: implement RampResult.feasible")
  
     @property
     def status(self) -> str:
-        # === MEMBER 2 — RampResult.status ===
+        # === Ace — RampResult.status ===
         # GOAL: Return the existing machine-readable FEASIBLE / FAIL: SPACE, ANGLE, FORCE status.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 2: implement RampResult.status")
+        raise NotImplementedError("Ace: implement RampResult.status")
  
     @property
     def plain_status(self) -> str:
-        # === MEMBER 2 — RampResult.plain_status ===
+        # === Ace — RampResult.plain_status ===
         # GOAL: Return the existing friendly wording for failed conditions.
         # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Member 2: implement RampResult.plain_status")
+        raise NotImplementedError("Ace: implement RampResult.plain_status")
  
  
 @dataclass(frozen=True)
@@ -165,52 +165,52 @@ def validate(inputs: Inputs, limits: PlanningLimits) -> None:
  
  
 def calculate_at_run(inputs: Inputs, limits: PlanningLimits, run_m: float) -> RampResult:
-    # === MEMBER 2 — calculate_at_run ===
+    # === Ace — calculate_at_run ===
     # GOAL: Construct RampResult for one given run; preserve geometry, steady/peak forces, work, and holding semantics.
     # Keep function name/parameters/return contract unchanged.
-    raise NotImplementedError("Member 2: implement calculate_at_run")
+    raise NotImplementedError("Ace: implement calculate_at_run")
  
  
 def theta_for_force(total_mass_kg: float, coefficient: float, added_force_n: float, force_limit_n: float) -> float:
-    # === MEMBER 3 — theta_for_force ===
+    # === Cedric — theta_for_force ===
     # GOAL: Solve the stated theoretical force inequality for its upper allowable angle in radians.
     # Keep function name/parameters/return contract unchanged.
-    raise NotImplementedError("Member 3: implement theta_for_force")
+    raise NotImplementedError("Cedric: implement theta_for_force")
  
  
 def analyze(inputs: Inputs, limits: PlanningLimits) -> Analysis:
-    # === MEMBER 3 — analyze ===
+    # === Cedric — analyze ===
     # GOAL: Calculate allowed angle, minimum required run, feasibility, at_max and at_min; return Analysis.
     # Keep function name/parameters/return contract unchanged.
-    raise NotImplementedError("Member 3: implement analyze")
+    raise NotImplementedError("Cedric: implement analyze")
  
  
 def sweep(inputs: Inputs, limits: PlanningLimits, points: int = GRID_POINTS) -> list[RampResult]:
-    # === MEMBER 4 — sweep ===
+    # === Christian — sweep ===
     # GOAL: Reproduce the existing 101-point angle-cap-to-xmax comparison list; preserve old CSV behavior for now.
     # Keep function name/parameters/return contract unchanged.
-    raise NotImplementedError("Member 4: implement sweep")
+    raise NotImplementedError("Christian: implement sweep")
  
  
 def reference_slopes(inputs: Inputs, limits: PlanningLimits) -> list[tuple[str, RampResult]]:
-    # === MEMBER 4 — reference_slopes ===
+    # === Christian — reference_slopes ===
     # GOAL: Evaluate the existing standard 1:N slope list from RATIOS.
     # Keep function name/parameters/return contract unchanged.
-    raise NotImplementedError("Member 4: implement reference_slopes")
+    raise NotImplementedError("Christian: implement reference_slopes")
  
  
 def force_derivative(inputs: Inputs, run_m: float) -> float:
-    # === MEMBER 3 — force_derivative ===
+    # === Cedric — force_derivative ===
     # GOAL: Compute dFsteady/dx analytically for a specified run.
     # Keep function name/parameters/return contract unchanged.
-    raise NotImplementedError("Member 3: implement force_derivative")
+    raise NotImplementedError("Cedric: implement force_derivative")
  
  
 def work_derivative(inputs: Inputs) -> float:
-    # === MEMBER 3 — work_derivative ===
+    # === Cedric — work_derivative ===
     # GOAL: Compute dW/dx analytically for the current transport coefficient.
     # Keep function name/parameters/return contract unchanged.
-    raise NotImplementedError("Member 3: implement work_derivative")
+    raise NotImplementedError("Cedric: implement work_derivative")
  
  
 def parse_run(text: str, height_m: float) -> float:
@@ -232,15 +232,15 @@ def parse_run(text: str, height_m: float) -> float:
  
  
 def what_if_sweep(inputs: Inputs, limits: PlanningLimits, points: int = 60) -> list[RampResult]:
-    # === MEMBER 4 — what_if_sweep ===
+    # === Christian — what_if_sweep ===
     # GOAL: Return diagnostic curve points even when the angle-cap run exceeds available space.
     # Keep function name/parameters/return contract unchanged.
-    raise NotImplementedError("Member 4: implement what_if_sweep")
+    raise NotImplementedError("Christian: implement what_if_sweep")
  
  
 def release_note(inputs: Inputs, result: RampResult) -> str:
-    # === MEMBER 2 — release_note ===
+    # === Ace — release_note ===
     # GOAL: Give the existing cautionary release wording; do NOT infer wheeled braking/holding from Crr.
     # Keep function name/parameters/return contract unchanged.
-    raise NotImplementedError("Member 2: implement release_note")
+    raise NotImplementedError("Ace: implement release_note")
  
