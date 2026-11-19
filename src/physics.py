@@ -224,6 +224,10 @@ def sweep(inputs: Inputs, limits: PlanningLimits, points: int = GRID_POINTS) -> 
     x_angle = inputs.height_m / math.tan(math.radians(limits.max_angle_deg))
     if x_angle > inputs.max_run_m + EPS:
         return []
+    start = min(x_angle, inputs.max_run_m)
+    stop = inputs.max_run_m
+    step = (stop - start) / (points - 1)
+    return [calculate_at_run(inputs, limits, start + i * step) for i in range(points)]
  
 def reference_slopes(inputs: Inputs, limits: PlanningLimits) -> list[tuple[str, RampResult]]:
     validate(inputs, limits)
