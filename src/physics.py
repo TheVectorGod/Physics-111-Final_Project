@@ -172,17 +172,53 @@ def calculate_at_run(inputs: Inputs, limits: PlanningLimits, run_m: float) -> Ra
  
  
 def theta_for_force(total_mass_kg: float, coefficient: float, added_force_n: float, force_limit_n: float) -> float:
-    # === Cedric — theta_for_force ===
-    # GOAL: Solve the stated theoretical force inequality for its upper allowable angle in radians.
-    # Keep function name/parameters/return contract unchanged.
-    raise NotImplementedError("Cedric: implement theta_for_force")
+    # Solve  M g (sin t + C cos t) + added <= Fmax  for the largest allowed angle t.
+    # sin t + C cos t = sqrt(1 + C^2) * sin(t + atan C), so
+    #   t = asin[(Fmax - added) / (M g sqrt(1 + C^2))] - atan C
+    weight = total_mass_kg * G
+    if weight <= 0:
+        return math.pi / 2
+    available = force_limit_n - added_force_n
+    if available <= 0:
+        return 0.0                      # the added force alone already exceeds the limit
+    phase = math.atan(coefficient)
+    ratio = available / (weight * math.sqrt(1.0 + coefficient * coefficient))
+    if ratio >= 1.0:
+        return math.pi / 2 - phase      # the limit can never be reached on any slope
+    return max(0.0, math.asin(ratio) - phase)   # 0.0 means even a flat start is too hard
  
  
 def analyze(inputs: Inputs, limits: PlanningLimits) -> Analysis:
-    # === Cedric — analyze ===
-    # GOAL: Calculate allowed angle, minimum required run, feasibility, at_max and at_min; return Analysis.
-    # Keep function name/parameters/return contract unchanged.
-    raise NotImplementedError("Cedric: implement analyze")
+    m = inputs.total_mass_kg
+    h = inputs.height_m
+    # Peak = Steady + M a (both modes); sliding peak is also at least the breakaway force,
+    # so the force limit must hold for BOTH expressions and the smaller angle wins.
+    theta_force = theta_for_force(m, inputs.kinetic_coefficient, m * limits.acceleration_mps2,
+                                  limits.max_peak_n)
+    if inputs.mode == "SLIDING":
+        theta_force = min(theta_force,
+                          theta_for_force(m, inputs.start_coefficient, 0.0, limits.max_peak_n))
+    theta_angle = math.radians(limits.max_angle_deg)
+    theta_allowed = min(theta_force, theta_angle)
+    limiting = "FORCE" if theta_force < theta_angle else "ANGLE"
+
+    x_angle = h / math.tan(theta_angle)
+    x_required = h / math.tan(theta_allowed) if theta_allowed > EPS else None
+    feasible = x_required is not None and x_required <= inputs.max_run_m + EPS
+
+    at_max = calculate_at_run(inputs, limits, inputs.max_run_m)
+    at_min = calculate_at_run(inputs, limits, min(x_required, inputs.max_run_m)) if feasible else None
+
+    if feasible:
+        reason = (f"FEASIBLE: any run from {x_required:.3f} m to {inputs.max_run_m:.3f} m "
+                  f"meets the angle and force limits")
+    elif x_required is None:
+        reason = "FAIL: FORCE - even a nearly flat ramp needs more than the peak-force limit"
+    else:
+        reason = (f"FAIL: SPACE - needs a run of {x_required:.3f} m ({limiting.lower()} limit) "
+                  f"but only {inputs.max_run_m:.3f} m is available")
+    return Analysis(feasible, reason, x_angle, x_required, math.degrees(theta_force),
+                    math.degrees(theta_allowed), limiting, at_max, at_min)
  
  
 def sweep(inputs: Inputs, limits: PlanningLimits, points: int = GRID_POINTS) -> list[RampResult]:
@@ -200,17 +236,14 @@ def reference_slopes(inputs: Inputs, limits: PlanningLimits) -> list[tuple[str, 
  
  
 def force_derivative(inputs: Inputs, run_m: float) -> float:
-    # === Cedric — force_derivative ===
-    # GOAL: Compute dFsteady/dx analytically for a specified run.
-    # Keep function name/parameters/return contract unchanged.
-    raise NotImplementedError("Cedric: implement force_derivative")
+    # Steady(x) = M g (h + k x) / sqrt(x^2 + h^2)   ->   dF/dx = M g h (k h - x) / (h^2 + x^2)^(3/2)
+    m, h, k = inputs.total_mass_kg, inputs.height_m, inputs.kinetic_coefficient
+    return m * G * h * (k * h - run_m) / (h * h + run_m * run_m) ** 1.5
  
  
 def work_derivative(inputs: Inputs) -> float:
-    # === Cedric — work_derivative ===
-    # GOAL: Compute dW/dx analytically for the current transport coefficient.
-    # Keep function name/parameters/return contract unchanged.
-    raise NotImplementedError("Cedric: implement work_derivative")
+    # W(x) = Steady * L = M g (h + k x)   ->   dW/dx = M g k
+    return inputs.total_mass_kg * G * inputs.kinetic_coefficient
  
  
 def parse_run(text: str, height_m: float) -> float:
@@ -243,4 +276,3 @@ def release_note(inputs: Inputs, result: RampResult) -> str:
     # GOAL: Give the existing cautionary release wording; do NOT infer wheeled braking/holding from Crr.
     # Keep function name/parameters/return contract unchanged.
     raise NotImplementedError("Ace: implement release_note")
- 
