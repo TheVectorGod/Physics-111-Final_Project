@@ -186,18 +186,16 @@ def analyze(inputs: Inputs, limits: PlanningLimits) -> Analysis:
  
  
 def sweep(inputs: Inputs, limits: PlanningLimits, points: int = GRID_POINTS) -> list[RampResult]:
-    # === Christian — sweep ===
-    # GOAL: Reproduce the existing 101-point angle-cap-to-xmax comparison list; preserve old CSV behavior for now.
-    # Keep function name/parameters/return contract unchanged.
-    raise NotImplementedError("Christian: implement sweep")
- 
+    validate(inputs, limits)
+    if points < 2:
+        raise ValueError("Sweep requires at least 2 points.")
+    x_angle = inputs.height_m / math.tan(math.radians(limits.max_angle_deg))
+    if x_angle > inputs.max_run_m + EPS:
+        return []
  
 def reference_slopes(inputs: Inputs, limits: PlanningLimits) -> list[tuple[str, RampResult]]:
-    # === Christian — reference_slopes ===
-    # GOAL: Evaluate the existing standard 1:N slope list from RATIOS.
-    # Keep function name/parameters/return contract unchanged.
-    raise NotImplementedError("Christian: implement reference_slopes")
- 
+    validate(inputs, limits)
+    return [(f"1:{ratio}", calculate_at_run(inputs, limits, ratio * inputs.height_m)) for ratio in RATIOS]
  
 def force_derivative(inputs: Inputs, run_m: float) -> float:
     # === Cedric — force_derivative ===
@@ -232,10 +230,16 @@ def parse_run(text: str, height_m: float) -> float:
  
  
 def what_if_sweep(inputs: Inputs, limits: PlanningLimits, points: int = 60) -> list[RampResult]:
-    # === Christian — what_if_sweep ===
-    # GOAL: Return diagnostic curve points even when the angle-cap run exceeds available space.
-    # Keep function name/parameters/return contract unchanged.
-    raise NotImplementedError("Christian: implement what_if_sweep")
+    validate(inputs, limits)
+    if points < 2:
+        raise ValueError("What-if sweep requires at least 2 points.")
+    x_angle = inputs.height_m / math.tan(math.radians(limits.max_angle_deg))
+    start = min(inputs.max_run_m, x_angle)
+    stop = max(inputs.max_run_m, x_angle * 1.15)
+    if stop <= start + EPS:
+        stop = start * 1.5
+    step = (stop - start) / (points - 1)
+    return [calculate_at_run(inputs, limits, start + i * step) for i in range(points)]
  
  
 def release_note(inputs: Inputs, result: RampResult) -> str:
