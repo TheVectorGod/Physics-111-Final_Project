@@ -172,9 +172,6 @@ def calculate_at_run(inputs: Inputs, limits: PlanningLimits, run_m: float) -> Ra
  
  
 def theta_for_force(total_mass_kg: float, coefficient: float, added_force_n: float, force_limit_n: float) -> float:
-    # Solve  M g (sin t + C cos t) + added <= Fmax  for the largest allowed angle t.
-    # sin t + C cos t = sqrt(1 + C^2) * sin(t + atan C), so
-    #   t = asin[(Fmax - added) / (M g sqrt(1 + C^2))] - atan C
     weight = total_mass_kg * G
     if weight <= 0:
         return math.pi / 2
@@ -191,8 +188,7 @@ def theta_for_force(total_mass_kg: float, coefficient: float, added_force_n: flo
 def analyze(inputs: Inputs, limits: PlanningLimits) -> Analysis:
     m = inputs.total_mass_kg
     h = inputs.height_m
-    # Peak = Steady + M a (both modes); sliding peak is also at least the breakaway force,
-    # so the force limit must hold for BOTH expressions and the smaller angle wins.
+
     theta_force = theta_for_force(m, inputs.kinetic_coefficient, m * limits.acceleration_mps2,
                                   limits.max_peak_n)
     if inputs.mode == "SLIDING":
@@ -234,13 +230,11 @@ def reference_slopes(inputs: Inputs, limits: PlanningLimits) -> list[tuple[str, 
     return [(f"1:{ratio}", calculate_at_run(inputs, limits, ratio * inputs.height_m)) for ratio in RATIOS]
  
 def force_derivative(inputs: Inputs, run_m: float) -> float:
-    # Steady(x) = M g (h + k x) / sqrt(x^2 + h^2)   ->   dF/dx = M g h (k h - x) / (h^2 + x^2)^(3/2)
     m, h, k = inputs.total_mass_kg, inputs.height_m, inputs.kinetic_coefficient
     return m * G * h * (k * h - run_m) / (h * h + run_m * run_m) ** 1.5
  
  
 def work_derivative(inputs: Inputs) -> float:
-    # W(x) = Steady * L = M g (h + k x)   ->   dW/dx = M g k
     return inputs.total_mass_kg * G * inputs.kinetic_coefficient
  
  
