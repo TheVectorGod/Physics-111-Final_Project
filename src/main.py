@@ -129,34 +129,89 @@ class RampForceApp(tk.Tk):
  
     # ------------------------------------------------------------------ fonts and style
     def _fonts(self):
-        # === Cedric — RampForceApp._fonts ===
-        # GOAL: Create shared Tkinter font objects.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Cedric: implement RampForceApp._fonts")
+        self.text_size = getattr(self, "text_size", 10)
+        family = tkfont.nametofont("TkDefaultFont").actual("family")
+        mono = tkfont.nametofont("TkFixedFont").actual("family")
+        size = self.text_size
+        self.fonts = {
+            "body": tkfont.Font(root=self, family=family, size=size),
+            "bold": tkfont.Font(root=self, family=family, size=size, weight="bold"),
+            "header": tkfont.Font(root=self, family=family, size=size + 4, weight="bold"),
+            "small": tkfont.Font(root=self, family=family, size=max(7, size - 1)),
+            "mono": tkfont.Font(root=self, family=mono, size=size),
+        }
+        self._apply_sizes()
  
     def _apply_sizes(self):
-        # === Cedric — RampForceApp._apply_sizes ===
-        # GOAL: Apply current text size to Tk fonts and Treeview rows.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Cedric: implement RampForceApp._apply_sizes")
+        size = self.text_size
+        sizes = {"body": size, "bold": size, "header": size + 4,
+                 "small": max(7, size - 1), "mono": size}
+        for name, font in self.fonts.items():
+            font.configure(size=sizes[name])
+        for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont", "TkFixedFont"):
+            tkfont.nametofont(name).configure(size=size)
+        style = ttk.Style(self)
+        style.configure("Treeview", font=self.fonts["body"],
+                        rowheight=self.fonts["body"].metrics("linespace") + 8)
+        style.configure("Treeview.Heading", font=self.fonts["bold"])
  
     def change_text_size(self, delta):
-        # === Cedric — RampForceApp.change_text_size ===
-        # GOAL: Change/reset base font size; reapply sizes and refresh the display.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Cedric: implement RampForceApp.change_text_size")
+        self.text_size = 10 if delta == 0 else max(8, min(24, self.text_size + delta))
+        self._apply_sizes()
+        self.run_analysis()                      
  
     def _style(self):
-        # === Cedric — RampForceApp._style ===
-        # GOAL: Configure ttk theme, colors and named label/button styles.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Cedric: implement RampForceApp._style")
+        if not hasattr(self, "fonts"):
+            self._fonts()
+        bg, fg, accent = "#f4f5f7", "#1f2933", "#1d4ed8"
+        style = ttk.Style(self)
+        if "clam" in style.theme_names():
+            style.theme_use("clam")
+        self.configure(background=bg)
+        style.configure(".", background=bg, foreground=fg)
+        style.configure("TFrame", background=bg)
+        style.configure("TLabel", background=bg, foreground=fg)
+        style.configure("TLabelframe", background=bg)
+        style.configure("TLabelframe.Label", background=bg, foreground=fg, font=self.fonts["bold"])
+        style.configure("TEntry", fieldbackground="#ffffff", padding=3)
+        style.configure("TNotebook", background=bg)
+        style.configure("TNotebook.Tab", padding=(12, 6), font=self.fonts["bold"])
+        style.map("TNotebook.Tab", background=[("selected", "#ffffff")])
+        style.configure("TButton", padding=6)
+        style.configure("Accent.TButton", background=accent, foreground="#ffffff", padding=6)
+        style.map("Accent.TButton", background=[("active", "#1e40af"), ("pressed", "#1e3a8a")])
+        style.configure("Treeview", fieldbackground="#ffffff", background="#ffffff")
+        style.configure("Treeview.Heading", background="#e2e8f0", foreground=fg)
+        style.configure("Header.TLabel", font=self.fonts["header"], foreground="#0f172a")
+        style.configure("Title.TLabel", font=self.fonts["header"], foreground="#0f172a")
+        style.configure("Hint.TLabel", font=self.fonts["small"], foreground="#4b5563")
+        style.configure("Error.TLabel", font=self.fonts["small"], foreground="#b91c1c")
+        style.configure("CardTitle.TLabel", font=self.fonts["small"], foreground="#374151")
+        style.configure("CardValue.TLabel", font=self.fonts["header"], foreground="#0f172a")
+        self._apply_sizes()
  
     def _bind_keys(self):
-        # === Cedric — RampForceApp._bind_keys ===
-        # GOAL: Connect Enter, Ctrl+Plus, Ctrl+Minus and Ctrl+0 shortcuts.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Cedric: implement RampForceApp._bind_keys")
+        def run_enter(_event=None):
+            after_id = getattr(self, "_after_id", None)
+            if after_id is not None:                 
+                self.after_cancel(after_id)
+                self._after_id = None
+            self.run_analysis()
+
+        def resizer(delta):
+            def handler(_event=None):
+                self.change_text_size(delta)
+                return "break"
+            return handler
+
+        for seq in ("<Return>", "<KP_Enter>"):
+            self.bind(seq, run_enter)
+        for seq in ("<Control-plus>", "<Control-equal>", "<Control-KP_Add>"):
+            self.bind(seq, resizer(1))
+        for seq in ("<Control-minus>", "<Control-KP_Subtract>"):
+            self.bind(seq, resizer(-1))
+        for seq in ("<Control-0>", "<Control-KP_0>"):
+            self.bind(seq, resizer(0))
  
     # ------------------------------------------------------------------ building blocks
     def _field(self, parent, key):
@@ -182,10 +237,25 @@ class RampForceApp(tk.Tk):
  
     @staticmethod
     def _table(parent, columns):
-        # === Cedric — RampForceApp._table ===
-        # GOAL: Create a ttk.Treeview with headings and horizontal/vertical scrollbars.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Cedric: implement RampForceApp._table")
+        box = ttk.Frame(parent)
+        box.pack(fill="both", expand=True)
+        ids = [f"c{n}" for n in range(len(columns))]
+        tree = ttk.Treeview(box, columns=ids, show="headings", selectmode="browse")
+        for cid, col in zip(ids, columns):
+            heading, width = col if isinstance(col, (tuple, list)) else (col, 110)
+            tree.heading(cid, text=heading)
+            tree.column(cid, width=width, minwidth=60, anchor="center", stretch=True)
+        tree.tag_configure("ok", background="#e6f4ea")
+        tree.tag_configure("bad", background="#fdecea")
+        ybar = ttk.Scrollbar(box, orient="vertical", command=tree.yview)
+        xbar = ttk.Scrollbar(box, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=ybar.set, xscrollcommand=xbar.set)
+        tree.grid(row=0, column=0, sticky="nsew")
+        ybar.grid(row=0, column=1, sticky="ns")
+        xbar.grid(row=1, column=0, sticky="ew")
+        box.rowconfigure(0, weight=1)
+        box.columnconfigure(0, weight=1)
+        return tree
  
     @staticmethod
     def _text_box(parent, font):
@@ -301,16 +371,34 @@ class RampForceApp(tk.Tk):
         raise NotImplementedError("Ace: implement RampForceApp._build_overview")
  
     def _on_check_return(self, _event=None):
-        # === Cedric — RampForceApp._on_check_return ===
-        # GOAL: Run custom check and prevent global Enter handling from repeating analysis.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Cedric: implement RampForceApp._on_check_return")
+        self.check_custom()
+        return "break"                           
  
     def _build_comparison(self, page):
-        # === Cedric — RampForceApp._build_comparison ===
-        # GOAL: Build Matplotlib plots, comparison controls, and ramp table.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Cedric: implement RampForceApp._build_comparison")
+        self.table_mode = tk.StringVar(value="runs")
+        self.table_note = tk.StringVar(value="")
+        bar = ttk.Frame(page)
+        bar.pack(fill="x", pady=(0, 6))
+        ttk.Label(bar, text="Table shows:").pack(side="left")
+        for text, value in (("Candidate runs", "runs"), ("Standard slopes (1:N)", "slopes")):
+            ttk.Radiobutton(bar, text=text, value=value, variable=self.table_mode,
+                            command=lambda: self._update_table(self.table_mode.get())
+                            ).pack(side="left", padx=(8, 0))
+        ttk.Button(bar, text="Save graph (PNG)", command=self.save_graph).pack(side="right")
+        ttk.Button(bar, text="Save candidates (CSV)",
+                   command=lambda: self.save_csv("candidates")).pack(side="right", padx=6)
+
+        self.fig = Figure(figsize=(8, 4.6), dpi=100, layout="constrained")
+        self.plot_canvas = FigureCanvasTkAgg(self.fig, master=page)
+        self.plot_canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        ttk.Label(page, textvariable=self.table_note, style="Hint.TLabel").pack(anchor="w", pady=(6, 2))
+        holder = ttk.Frame(page)
+        holder.pack(fill="x")
+        self.ramp_table = self._table(holder, [
+            ("Ramp", 90), ("Run (m)", 80), ("Angle (\u00b0)", 80), ("Steady (N)", 90),
+            ("Peak (N)", 90), ("Work (J)", 90), ("Status", 260)])
+        self.ramp_table.configure(height=7)
  
     def _build_steps(self, page):
         # === Ace — RampForceApp._build_steps ===
@@ -378,10 +466,30 @@ class RampForceApp(tk.Tk):
         raise NotImplementedError("Ace: implement RampForceApp._fill")
  
     def _clear_results(self):
-        # === Cedric — RampForceApp._clear_results ===
-        # GOAL: Clear old verdict, data tables, graph and explanation when input is invalid.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Cedric: implement RampForceApp._clear_results")
+        self.analysis, self.rows = None, []
+        self._show_banner("warn", "\u26a0", "Check your inputs",
+                          "Fix the highlighted boxes to see results.")
+
+        def blank(obj):
+            if isinstance(obj, tk.Variable):
+                obj.set("")
+            elif isinstance(obj, dict):
+                for value in obj.values():
+                    blank(value)
+            elif isinstance(obj, (list, tuple)):
+                for value in obj:
+                    blank(value)
+
+        blank(getattr(self, "card_vars", None))          # Ace: result-card StringVars
+        blank(getattr(self, "custom_result", None))      # custom-run checker text
+        canvas = getattr(self, "ramp_canvas", None)      # Ace: ramp drawing
+        if canvas is not None:
+            canvas.delete("all")
+        steps = getattr(self, "steps_text", None)        # Ace: "How it was calculated" text
+        if steps is not None:
+            self._set_text(steps, "")
+        self._update_table(self.table_mode.get())        # empties the table (no analysis)
+        self._update_graphs()                            # shows the "enter valid inputs" message
  
     def _show_banner(self, level, icon, title, text):
         # === Ace — RampForceApp._show_banner ===
@@ -397,22 +505,116 @@ class RampForceApp(tk.Tk):
         raise NotImplementedError("Ace: implement RampForceApp._draw_ramp")
  
     def check_custom(self, quiet=False):
-        # === Cedric — RampForceApp.check_custom ===
-        # GOAL: Evaluate a custom run as metres or 1:N; show plain-language constraints and results.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Cedric: implement RampForceApp.check_custom")
+        def show(text):
+            var = getattr(self, "custom_result", None)
+            if var is not None:
+                var.set(text)
+
+        i, l, errors = self._read_values()
+        if errors:
+            show("Fix the highlighted input boxes first.")
+            return None
+        try:
+            run = parse_run(self.vars["custom"].get(), i.height_m)
+        except ValueError as exc:
+            show("Type a run in metres (for example 2.5) or a slope such as 1:12, then press Enter."
+                 if quiet else f"\u26a0 {exc}")
+            return None
+        r = calculate_at_run(i, l, run)
+        mark = lambda ok: "\u2714" if ok else "\u2716"
+        show("\n".join([
+            (f"{mark(r.feasible)} This ramp works within your limits." if r.feasible
+             else f"{mark(False)} This ramp does not meet your limits.")
+            + f"  (run {r.run_m:.2f} m, slope {r.angle_deg:.1f}\u00b0, ramp length {r.length_m:.2f} m)",
+            f"{mark(r.space_ok)} Space: needs {r.run_m:.2f} m of floor; you have {i.max_run_m:.2f} m.",
+            f"{mark(r.angle_ok)} Slope: {r.angle_deg:.1f}\u00b0 against your limit of {l.max_angle_deg:g}\u00b0.",
+            f"{mark(r.force_ok)} First push: {r.peak_n:.0f} N against your limit of {l.max_peak_n:g} N.",
+            f"Keeping it moving takes {r.steady_n:.0f} N; the total work is {r.work_j:.0f} J.",
+        ]))
+        return r
  
     def _update_graphs(self):
-        # === Cedric — RampForceApp._update_graphs ===
-        # GOAL: Draw steady/peak forces and work; handle infeasible cases with what-if data.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Cedric: implement RampForceApp._update_graphs")
+        fig = getattr(self, "fig", None)
+        if fig is None:
+            return
+        a, i, l = (getattr(self, name, None) for name in ("analysis", "inputs", "limits"))
+        size = self.text_size - 1
+        fig.clear()
+        if a is None or i is None or l is None:
+            fig.text(0.5, 0.5, "Enter valid inputs to see the graphs.", ha="center", va="center",
+                     fontsize=size + 1)
+            self.plot_canvas.draw_idle()
+            return
+        rows = list(self.rows) if a.feasible else what_if_sweep(i, l)
+        if not rows:
+            fig.text(0.5, 0.5, "No data to plot.", ha="center", va="center", fontsize=size + 1)
+            self.plot_canvas.draw_idle()
+            return
+
+        c_steady, c_peak, c_work, c_grey, c_bad = "#1d4ed8", "#c2410c", "#15803d", "#6b7280", "#b91c1c"
+        x = [r.run_m for r in rows]
+        ax_f, ax_w = fig.subplots(2, 1, sharex=True)
+        ax_f.plot(x, [r.steady_n for r in rows], "-", color=c_steady, linewidth=2,
+                  label="Steady force (keep moving)")
+        ax_f.plot(x, [r.peak_n for r in rows], "--", color=c_peak, linewidth=2,
+                  label="Peak force (get started)")
+        ax_f.axhline(l.max_peak_n, color=c_grey, linestyle=":", linewidth=1.5,
+                     label=f"Your force limit ({l.max_peak_n:g} N)")
+        ax_w.plot(x, [r.work_j for r in rows], "-", color=c_work, linewidth=2, label="Work")
+        for ax in (ax_f, ax_w):
+            ax.axvline(i.max_run_m, color=c_grey, linestyle="-.", linewidth=1.2,
+                       label=f"Available run xmax ({i.max_run_m:g} m)")
+            if not a.feasible and a.x_required_m is not None:
+                ax.axvline(a.x_required_m, color=c_bad, linestyle=":", linewidth=1.5,
+                           label=f"Run needed ({a.x_required_m:.2f} m)")
+        if a.feasible and a.x_required_m > x[0]:
+            for ax in (ax_f, ax_w):
+                ax.axvspan(x[0], a.x_required_m, color=c_bad, alpha=0.08, linewidth=0,
+                           label="Breaks a limit" if ax is ax_f else None)
+        if a.feasible:
+            ax_f.plot([a.at_max.run_m], [a.at_max.steady_n], "o", color=c_steady, markersize=8,
+                      label=f"Least force: {a.at_max.run_m:.2f} m")
+            ax_w.plot([a.at_min.run_m], [a.at_min.work_j], "s", color=c_work, markersize=8,
+                      label=f"Least work: {a.at_min.run_m:.2f} m")
+            ax_f.set_title(f"Feasible: runs from {a.x_required_m:.2f} m to {i.max_run_m:.2f} m work",
+                           fontsize=size + 1)
+        else:
+            ax_f.set_title("What-if curves: NO ramp meets all your limits (diagnostic only)",
+                           fontsize=size + 1)
+        ax_f.set_ylabel("Force (N)", fontsize=size)
+        ax_w.set_ylabel("Work (J)", fontsize=size)
+        ax_w.set_xlabel("Ramp run x (m)", fontsize=size)
+        for ax in (ax_f, ax_w):
+            ax.grid(True, alpha=0.3)
+            ax.tick_params(labelsize=size)
+            ax.legend(fontsize=max(6, size - 1), loc="best")
+        self.plot_canvas.draw_idle()
  
     def _update_table(self, which):
-        # === Cedric — RampForceApp._update_table ===
-        # GOAL: Populate 101-run or standard-slope results with readable status values.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Cedric: implement RampForceApp._update_table")
+        tree = getattr(self, "ramp_table", None)
+        if tree is None:
+            return
+        tree.delete(*tree.get_children())
+        a, i, l = (getattr(self, name, None) for name in ("analysis", "inputs", "limits"))
+        if a is None or i is None or l is None:
+            self.table_note.set("")
+            return
+        if which in ("slopes", "standard", "reference"):
+            entries = list(reference_slopes(i, l))
+            self.table_note.set("Standard slopes 1:N (run = N \u00d7 height). \u2714 means all three limits are met.")
+        else:
+            rows = list(self.rows) if a.feasible else what_if_sweep(i, l)
+            entries = [(f"Run {n}", r) for n, r in enumerate(rows, 1)]
+            if a.feasible:
+                self.table_note.set(f"{len(rows)} candidate runs from the angle-limit run to xmax. "
+                                    "\u2714 means all three limits are met.")
+            else:
+                self.table_note.set("No ramp meets all limits. These what-if runs are diagnostic only.")
+        for label, r in entries:
+            icon = "\u2714" if r.feasible else "\u2716"
+            tree.insert("", "end", tags=("ok" if r.feasible else "bad",), values=(
+                label, f"{r.run_m:.2f}", f"{r.angle_deg:.1f}", f"{r.steady_n:.1f}",
+                f"{r.peak_n:.1f}", f"{r.work_j:.0f}", f"{icon} {r.plain_status}"))
  
     # ------------------------------------------------------------------ files
     def _choose_file(self, filename, kind="csv", save=True):
@@ -468,4 +670,3 @@ def _enable_sharp_text_on_windows():
 if __name__ == "__main__":
     _enable_sharp_text_on_windows()
     RampForceApp().mainloop()
- 
