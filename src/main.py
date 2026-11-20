@@ -272,10 +272,10 @@ class RampForceApp(tk.Tk):
         raise NotImplementedError("Ace: implement RampForceApp._set_text")
  
     def _rewrap(self, width):
-        # === Christian — RampForceApp._rewrap ===
-        # GOAL: Update long label wraplengths when the window resizes.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Christian: implement RampForceApp._rewrap")
+        target = max(320, width - 380)
+        for lbl in getattr(self, "_wrap_labels", []):
+            if lbl.winfo_exists():
+                lbl.configure(wraplength=target)
  
     # ------------------------------------------------------------------ layout
     def _build(self):
@@ -618,10 +618,25 @@ class RampForceApp(tk.Tk):
  
     # ------------------------------------------------------------------ files
     def _choose_file(self, filename, kind="csv", save=True):
-        # === Christian — RampForceApp._choose_file ===
-        # GOAL: Open a tkinter file chooser for CSV/PNG save or import.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Christian: implement RampForceApp._choose_file")
+        if kind == "png":
+            filetypes = [("PNG image", "*.png"), ("All files", "*.*")]
+            defaultext = ".png"
+        else:
+            filetypes = [("CSV file", "*.csv"), ("All files", "*.*")]
+            defaultext = ".csv"
+
+        if save:
+            return filedialog.asksaveasfilename(
+                parent=self,
+                initialfile=filename,
+                defaultextension=defaultext,
+                filetypes=filetypes,
+            )
+        return filedialog.askopenfilename(
+            parent=self,
+            initialfile=filename,
+            filetypes=filetypes,
+        )
  
     def save_graph(self):
         # === Christian — RampForceApp.save_graph ===
@@ -636,10 +651,9 @@ class RampForceApp(tk.Tk):
         raise NotImplementedError("Christian: implement RampForceApp.save_csv")
  
     def import_refs(self):
-        # === Christian — RampForceApp.import_refs ===
-        # GOAL: Choose a reference CSV to import.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Christian: implement RampForceApp.import_refs")
+        path = self._choose_file("reference_cases.csv", kind="csv", save=False)
+        if path:
+            self._load_refs(path)
  
     def _load_supplied(self):
         # === Christian — RampForceApp._load_supplied ===
@@ -654,17 +668,48 @@ class RampForceApp(tk.Tk):
         raise NotImplementedError("Christian: implement RampForceApp._load_refs")
  
     def _show_references(self, rows):
-        # === Christian — RampForceApp._show_references ===
-        # GOAL: Fill reference results table and compute mean absolute errors.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Christian: implement RampForceApp._show_references")
+        self.ref_rows = rows
+        for item in self.ref_table.get_children():
+            self.ref_table.delete(item)
+
+        for r in rows:
+            self.ref_table.insert("", "end", values=(
+                r["case"],
+                r["mode"],
+                f"{r['ref_steady']:.3f}",
+                f"{r['calc_steady']:.3f}",
+                f"{r['steady_err']:.6f}",
+                f"{r['ref_peak']:.3f}",
+                f"{r['calc_peak']:.3f}",
+                f"{r['peak_err']:.6f}",
+                f"{r['ref_work']:.3f}",
+                f"{r['calc_work']:.3f}",
+                f"{r['work_err']:.6f}",
+            ))
+
+        n = len(rows)
+        mae_steady = sum(r["steady_err"] for r in rows) / n
+        mae_peak = sum(r["peak_err"] for r in rows) / n
+        mae_work = sum(r["work_err"] for r in rows) / n
+        self.ref_summary_var.set(
+            f"Loaded {n} reference cases — Mean Absolute Error: "
+            f"Steady = {mae_steady:.6f} N, Peak = {mae_peak:.6f} N, Work = {mae_work:.6f} J "
+            "(implementation QA against declared equations)."
+        )
  
  
 def _enable_sharp_text_on_windows():
-    # === Christian — _enable_sharp_text_on_windows ===
-    # GOAL: Apply optional Windows DPI awareness; skip gracefully on non-Windows systems.
-    # Keep function name/parameters/return contract unchanged.
-    raise NotImplementedError("Christian: implement _enable_sharp_text_on_windows")
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        try:
+            import ctypes
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
  
  
 if __name__ == "__main__":
