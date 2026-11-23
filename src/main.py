@@ -1,29 +1,21 @@
 """RampForce desktop interface. Run `python main.py` after `pip install -r requirements.txt`."""
 from __future__ import annotations
- 
+
 from pathlib import Path
 import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from tkinter import font as tkfont
- 
+
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
- 
+
 from physics import (Inputs, PlanningLimits, analyze, calculate_at_run, field_errors, parse_run,
                      reference_slopes, release_note, sweep, what_if_sweep)
 from datasets import (SUPPLIED_REFERENCE_CSV, compare_reference_text, compare_references,
                       export_candidates, export_comparison, export_summary)
 from explain import explain_steps, verdict_text
 
-# IMPORT GUIDE (keep these statements so other files integrate unchanged):
-# `tkinter`/`ttk`: window, entries, buttons, canvases, notebook tabs, and tables.
-# `filedialog`/`messagebox`: file selection and friendly error dialogs.
-# `tkfont`: adjustable text sizes; `Figure` and `FigureCanvasTkAgg`: embedded plots.
-# `physics`: all calculations, feasibility, slopes, and validation.
-# `datasets`: CSV file export and comparing reference tests; `explain`: wording.
-# `Path` and `sys`: locate packaged files such as sample CSVs.
- 
 BASE = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 FIELDS = {
     "load": "Cargo mass (kg)", "carrier": "Sled/cart mass (kg)",
@@ -59,32 +51,32 @@ MODEL_TEXT = """THEORETICAL MODELS (g = 9.81 m/s²)
 M = cargo + carrier mass; x = horizontal run; h = platform height.
 L = sqrt(x² + h²),   θ = atan2(h, x)
 Normal = Mg cos θ;   Downhill gravity = Mg sin θ
- 
+
 SLIDING:
 Steady = Mg(sin θ + μk cos θ)
 Breakaway = Mg(sin θ + μs cos θ)
 Peak = max(Breakaway, Steady + Ma)
 Static holding is only checked for a load that is already at rest
 (see "How it was calculated", step 6).
- 
+
 WHEELED:
 Effective Crr = b/r (both in the same length unit)
 Steady = Mg(sin θ + Crr cos θ)
 Peak = Steady + Ma
 Stationary wheel holding/braking is NOT predicted: a released cart
 may roll back, so hold or brake it.
- 
+
 WORK AND CALCULUS:
 W = Steady × L = Mg(h + kx), where k = μk or Crr
 Steady-force derivative = Mgh(kh − x)/(h² + x²)^(3/2)
 Work derivative = Mgk
 Within the model's restricted angle/coefficients, the longest qualifying
 run gives the least steady force; the shortest gives the least work.
- 
+
 A candidate qualifies only when all three conditions are met:
 x ≤ xmax,  θ ≤ angle limit,  Peak ≤ force limit.
 The 101-point sweep is for comparison, NOT physical measurements.
- 
+
 LIMITATIONS:
 The ramp is idealized as straight and rigid; the push is parallel to it;
 coefficients are assumed constant. Start-up is a simplified estimate.
@@ -92,17 +84,17 @@ The application does not measure human effort, structural strength, braking,
 or workplace safety. Planning limits are user-defined examples, NOT standards.
 Independent reference equations verify implementation, not physical accuracy.
 """
- 
- 
+
+
 class Tooltip:
     """Small help bubble shown on mouse hover or keyboard focus."""
- 
+
     def __init__(self, widget, text):
         self.widget, self.text, self.tip = widget, text, None
         for event, handler in (("<Enter>", self.show), ("<FocusIn>", self.show), ("<Leave>", self.hide),
                                ("<FocusOut>", self.hide), ("<Escape>", self.hide)):
             widget.bind(event, handler, add="+")
- 
+
     def show(self, _event=None):
         if self.tip or not self.text:
             return
@@ -113,132 +105,93 @@ class Tooltip:
         self.tip.wm_geometry(f"+{x}+{y}")
         tk.Label(self.tip, text=self.text, justify="left", background="#fffbe0", foreground="#222222",
                  relief="solid", borderwidth=1, wraplength=320, padx=8, pady=6).pack()
- 
+
     def hide(self, _event=None):
         if self.tip:
             self.tip.destroy()
             self.tip = None
- 
- 
+
+
 class RampForceApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("RampForce — Inclined-Plane Push & Pull Planner")
-        self.geometry("1220x780")
-        self.minsize(980, 640)
-
-        self.vars = {k: tk.StringVar(value=v) for k, v in DEFAULTS.items()}
-        self.error_vars = {k: tk.StringVar() for k in FIELDS}
-        self.entries = {}
-        self.error_labels = {}
-
-        self.text_size = 10
+        self.title("RampForce | Inclined-Plane Analysis")
+        # never ask for more than the screen offers (many laptops are only 768 px tall)
+        self.geometry(f"{min(1250, self.winfo_screenwidth() - 40)}x{min(790, self.winfo_screenheight() - 90)}")
+        self.minsize(900, 600)
+        self.vars = {key: tk.StringVar(value=value) for key, value in DEFAULTS.items()}
+        self.error_vars = {key: tk.StringVar() for key in FIELDS}
+        self.entries, self.error_labels = {}, {}
+        self.status = tk.StringVar(value="Ready")
+        self.inputs = self.limits = self.analysis = None
+        self.candidates = []
+        self.reference_rows = []
+        self.table_choice = "candidates"
+        self.diagram_choice = tk.StringVar(value="Least-force run")
+        self.base_size = 11
+        self.style = None
         self._after_id = None
-        self.inputs = None
-        self.limits = None
-        self.analysis = None
-        self.rows = []
-        self.ref_rows = []
         self._wrap_labels = []
-        self.fig = None
-
         self._fonts()
         self._style()
         self._build()
         self._bind_keys()
-
-        for var in self.vars.values():
-            var.trace_add("write", self._schedule_analysis)
-
-        self.bind("<Configure>", lambda e: self._rewrap(e.width) if e.widget is self else None)
         self.run_analysis()
- 
+        # live updates start only now, so building the window does not trigger recalculations
+        for key in FIELDS:
+            self.vars[key].trace_add("write", self._schedule_analysis)
+
     # ------------------------------------------------------------------ fonts and style
     def _fonts(self):
-        self.text_size = getattr(self, "text_size", 10)
-        family = tkfont.nametofont("TkDefaultFont").actual("family")
-        mono = tkfont.nametofont("TkFixedFont").actual("family")
-        size = self.text_size
-        self.fonts = {
-            "body": tkfont.Font(root=self, family=family, size=size),
-            "bold": tkfont.Font(root=self, family=family, size=size, weight="bold"),
-            "header": tkfont.Font(root=self, family=family, size=size + 4, weight="bold"),
-            "small": tkfont.Font(root=self, family=family, size=max(7, size - 1)),
-            "mono": tkfont.Font(root=self, family=mono, size=size),
-        }
+        self.f_default = tkfont.nametofont("TkDefaultFont")
+        self.f_text = tkfont.nametofont("TkTextFont")
+        self.f_fixed = tkfont.nametofont("TkFixedFont")
+        family = self.f_default.actual("family")
+        self.f_bold = tkfont.Font(family=family, weight="bold")
+        self.f_head = tkfont.Font(family=family, weight="bold")
+        self.f_verdict = tkfont.Font(family=family, weight="bold")
+        self.f_icon = tkfont.Font(family=family, weight="bold")
         self._apply_sizes()
- 
+
     def _apply_sizes(self):
-        size = self.text_size
-        sizes = {"body": size, "bold": size, "header": size + 4,
-                 "small": max(7, size - 1), "mono": size}
-        for name, font in self.fonts.items():
-            font.configure(size=sizes[name])
-        for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont", "TkFixedFont"):
-            tkfont.nametofont(name).configure(size=size)
-        style = ttk.Style(self)
-        style.configure("Treeview", font=self.fonts["body"],
-                        rowheight=self.fonts["body"].metrics("linespace") + 8)
-        style.configure("Treeview.Heading", font=self.fonts["bold"])
- 
+        b = self.base_size
+        for font, size in ((self.f_default, b), (self.f_text, b), (self.f_fixed, b), (self.f_bold, b),
+                           (self.f_head, b + 3), (self.f_verdict, b + 7), (self.f_icon, b + 20)):
+            font.configure(size=size)
+        for name in ("TkMenuFont", "TkHeadingFont", "TkCaptionFont"):
+            try:
+                tkfont.nametofont(name).configure(size=b)
+            except tk.TclError:
+                pass
+        if self.style is not None:
+            self.style.configure("Treeview", rowheight=int(b * 2.3))
+
     def change_text_size(self, delta):
-        self.text_size = 10 if delta == 0 else max(8, min(24, self.text_size + delta))
+        """delta = +1 / -1 to grow or shrink all text; 0 resets it."""
+        self.base_size = max(9, min(20, self.base_size + delta)) if delta else 11
         self._apply_sizes()
-        self.run_analysis()                      
- 
+        self.run_analysis()
+
     def _style(self):
-        if not hasattr(self, "fonts"):
-            self._fonts()
-        bg, fg, accent = "#f4f5f7", "#1f2933", "#1d4ed8"
-        style = ttk.Style(self)
-        if "clam" in style.theme_names():
-            style.theme_use("clam")
-        self.configure(background=bg)
-        style.configure(".", background=bg, foreground=fg)
-        style.configure("TFrame", background=bg)
-        style.configure("TLabel", background=bg, foreground=fg)
-        style.configure("TLabelframe", background=bg)
-        style.configure("TLabelframe.Label", background=bg, foreground=fg, font=self.fonts["bold"])
-        style.configure("TEntry", fieldbackground="#ffffff", padding=3)
-        style.configure("TNotebook", background=bg)
-        style.configure("TNotebook.Tab", padding=(12, 6), font=self.fonts["bold"])
-        style.map("TNotebook.Tab", background=[("selected", "#ffffff")])
-        style.configure("TButton", padding=6)
-        style.configure("Accent.TButton", background=accent, foreground="#ffffff", padding=6)
-        style.map("Accent.TButton", background=[("active", "#1e40af"), ("pressed", "#1e3a8a")])
-        style.configure("Treeview", fieldbackground="#ffffff", background="#ffffff")
-        style.configure("Treeview.Heading", background="#e2e8f0", foreground=fg)
-        style.configure("Header.TLabel", font=self.fonts["header"], foreground="#0f172a")
-        style.configure("Title.TLabel", font=self.fonts["header"], foreground="#0f172a")
-        style.configure("Hint.TLabel", font=self.fonts["small"], foreground="#4b5563")
-        style.configure("Error.TLabel", font=self.fonts["small"], foreground="#b91c1c")
-        style.configure("CardTitle.TLabel", font=self.fonts["small"], foreground="#374151")
-        style.configure("CardValue.TLabel", font=self.fonts["header"], foreground="#0f172a")
-        self._apply_sizes()
- 
+        self.style = style = ttk.Style()
+        style.theme_use("clam")
+        self.configure(bg="#f2f6fa")
+        style.configure("TButton", padding=(8, 5))
+        style.configure("TNotebook.Tab", padding=(14, 8))
+        style.configure("Treeview", rowheight=int(self.base_size * 2.3))
+        style.configure("Header.TLabel", font=self.f_head)
+        style.configure("Error.TLabel", foreground="#9b1c1c")
+        style.configure("Hint.TLabel", foreground="#4a4a4a")
+        style.configure("Value.TLabel", font=self.f_bold)
+
     def _bind_keys(self):
-        def run_enter(_event=None):
-            after_id = getattr(self, "_after_id", None)
-            if after_id is not None:                 
-                self.after_cancel(after_id)
-                self._after_id = None
-            self.run_analysis()
-
-        def resizer(delta):
-            def handler(_event=None):
-                self.change_text_size(delta)
-                return "break"
-            return handler
-
-        for seq in ("<Return>", "<KP_Enter>"):
-            self.bind(seq, run_enter)
+        self.bind("<Return>", lambda _: self.run_analysis())
         for seq in ("<Control-plus>", "<Control-equal>", "<Control-KP_Add>"):
-            self.bind(seq, resizer(1))
+            self.bind(seq, lambda _: self.change_text_size(1))
         for seq in ("<Control-minus>", "<Control-KP_Subtract>"):
-            self.bind(seq, resizer(-1))
-        for seq in ("<Control-0>", "<Control-KP_0>"):
-            self.bind(seq, resizer(0))
- 
+            self.bind(seq, lambda _: self.change_text_size(-1))
+        self.bind("<Control-0>", lambda _: self.change_text_size(0))
+
     # ------------------------------------------------------------------ building blocks
     def _field(self, parent, key):
         label = ttk.Label(parent, text=FIELDS[key])
@@ -250,7 +203,7 @@ class RampForceApp(tk.Tk):
                                            wraplength=240, justify="left")
         Tooltip(entry, TIPS[key])
         Tooltip(label, TIPS[key])
- 
+
     def _show_field_errors(self, errors):
         """Put each message right under its own box (instead of one popup at a time)."""
         for key, label in self.error_labels.items():
@@ -260,118 +213,78 @@ class RampForceApp(tk.Tk):
                 label.pack(anchor="w", after=self.entries[key])
             else:
                 label.pack_forget()
- 
+
     @staticmethod
     def _table(parent, columns):
-        box = ttk.Frame(parent)
-        box.pack(fill="both", expand=True)
-        ids = [f"c{n}" for n in range(len(columns))]
-        tree = ttk.Treeview(box, columns=ids, show="headings", selectmode="browse")
-        for cid, col in zip(ids, columns):
-            heading, width = col if isinstance(col, (tuple, list)) else (col, 110)
-            tree.heading(cid, text=heading)
-            tree.column(cid, width=width, minwidth=60, anchor="center", stretch=True)
-        tree.tag_configure("ok", background="#e6f4ea")
-        tree.tag_configure("bad", background="#fdecea")
-        ybar = ttk.Scrollbar(box, orient="vertical", command=tree.yview)
-        xbar = ttk.Scrollbar(box, orient="horizontal", command=tree.xview)
-        tree.configure(yscrollcommand=ybar.set, xscrollcommand=xbar.set)
+        frame = ttk.Frame(parent)
+        frame.pack(fill="both", expand=True, pady=7)
+        tree = ttk.Treeview(frame, columns=[c[0] for c in columns], show="headings")
+        for key, label, width in columns:
+            tree.heading(key, text=label)
+            tree.column(key, width=width, anchor="center", minwidth=70)
+        vs = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        hs = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=vs.set, xscrollcommand=hs.set)
         tree.grid(row=0, column=0, sticky="nsew")
-        ybar.grid(row=0, column=1, sticky="ns")
-        xbar.grid(row=1, column=0, sticky="ew")
-        box.rowconfigure(0, weight=1)
-        box.columnconfigure(0, weight=1)
+        vs.grid(row=0, column=1, sticky="ns")
+        hs.grid(row=1, column=0, sticky="ew")
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
         return tree
- 
-       @staticmethod
+
+    @staticmethod
     def _text_box(parent, font):
-        container = ttk.Frame(parent)
-        container.pack(fill="both", expand=True)
+        frame = ttk.Frame(parent)
+        frame.pack(fill="both", expand=True)
+        text = tk.Text(frame, wrap="word", font=font, padx=10, pady=10, state="disabled")
+        bar = ttk.Scrollbar(frame, orient="vertical", command=text.yview)
+        text.configure(yscrollcommand=bar.set)
+        text.pack(side="left", fill="both", expand=True)
+        bar.pack(side="right", fill="y")
+        return text
 
-        text_widget = tk.Text(
-            container,
-            wrap="word",
-            font=font,
-            padx=10,
-            pady=10,
-            relief="flat",
-            borderwidth=0,
-            state="disabled"
-        )
-
-        scrollbar = ttk.Scrollbar(
-            container,
-            orient="vertical",
-            command=text_widget.yview
-        )
-
-        text_widget.configure(yscrollcommand=scrollbar.set)
-
-        text_widget.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-
-        text_widget.tag_configure(
-            "step_heading",
-            foreground="#1d4ed8",
-            font=(font.actual("family"), font.actual("size"), "bold")
-        )
-        return text_widget
     @staticmethod
     def _set_text(widget, content):
-               widget.configure(state="normal")
+        widget.configure(state="normal")
         widget.delete("1.0", "end")
-        if content:
-            lines = str(content).splitlines()
-            for index, line in enumerate(lines):
-                if index > 0:
-                    widget.insert("end", "\n")
-
-                if line.strip().upper().startswith("STEP"):
-                    widget.insert("end", line, "step_heading")
-                else:
-                    widget.insert("end", line)
+        for line in content.split("\n"):
+            widget.insert("end", line + "\n", "step" if line.startswith("STEP") else ())
         widget.configure(state="disabled")
+
     def _rewrap(self, width):
-        target = max(320, width - 380)
-        for lbl in getattr(self, "_wrap_labels", []):
-            if lbl.winfo_exists():
-                lbl.configure(wraplength=target)
- 
+        """Keep long labels inside the window however wide it is (they used to be clipped)."""
+        for label, margin in self._wrap_labels:
+            label.configure(wraplength=max(width - margin, 200))
+
     # ------------------------------------------------------------------ layout
     def _build(self):
-        top = ttk.Frame(self, padding=(12, 8))
-        top.pack(fill="x")
-        ttk.Label(top, text="RampForce", style="Title.TLabel").pack(side="left")
-        ttk.Label(top, text="  Inclined-plane push/pull calculator (theoretical model only)",
-                  style="Hint.TLabel").pack(side="left")
-
-        right = ttk.Frame(top)
-        right.pack(side="right")
-        ttk.Label(right, text="Text size:").pack(side="left", padx=(0, 4))
-        ttk.Button(right, text="A-", width=3, command=lambda: self.change_text_size(-1)).pack(side="left", padx=1)
-        ttk.Button(right, text="A", width=3, command=lambda: self.change_text_size(0)).pack(side="left", padx=1)
-        ttk.Button(right, text="A+", width=3, command=lambda: self.change_text_size(1)).pack(side="left", padx=1)
-        ttk.Button(right, text="Export summary CSV", command=lambda: self.save_csv("summary")).pack(side="left", padx=(10, 0))
-
-        body = ttk.Frame(self, padding=(12, 0, 12, 12))
+        top = ttk.Frame(self)
+        top.pack(fill="x", padx=18, pady=(12, 5))
+        ttk.Label(top, text="RAMPFORCE  |  Physics-Based Ramp Analysis", style="Header.TLabel").pack(side="left")
+        larger = ttk.Button(top, text="A+", width=3, command=lambda: self.change_text_size(1))
+        smaller = ttk.Button(top, text="A-", width=3, command=lambda: self.change_text_size(-1))
+        larger.pack(side="right", padx=2)
+        smaller.pack(side="right", padx=2)
+        ttk.Label(top, text="Text size:").pack(side="right", padx=4)
+        Tooltip(larger, "Larger text (Ctrl+Plus)")
+        Tooltip(smaller, "Smaller text (Ctrl+Minus)")
+        ttk.Label(self, textvariable=self.status).pack(side="bottom", fill="x", padx=18, pady=5)
+        body = ttk.Frame(self, padding=12)
         body.pack(fill="both", expand=True)
         self._build_inputs(body)
-
-        self.notebook = ttk.Notebook(body)
-        self.notebook.pack(side="left", fill="both", expand=True, padx=(10, 0))
-
-        tabs = [
-            ("Overview & verdict", self._build_overview),
-            ("Sweep & graphs", self._build_comparison),
+        tabs = ttk.Notebook(body)
+        tabs.pack(side="left", fill="both", expand=True, padx=(12, 0))
+        for label, builder in [
+            ("Overview", self._build_overview),
+            ("Ramp comparison", self._build_comparison),
             ("How it was calculated", self._build_steps),
-            ("Reference QA", self._build_references),
-            ("Models & limits", self._build_models),
-        ]
-        for label, builder in tabs:
-            page = ttk.Frame(self.notebook, padding=10)
-            self.notebook.add(page, text=label)
+            ("Reference verification", self._build_references),
+            ("Models & limitations", self._build_models),
+        ]:
+            page = ttk.Frame(tabs, padding=12)
+            tabs.add(page, text=label)
             builder(page)
- 
+
     def _build_inputs(self, parent):
         side = ttk.Frame(parent, width=300)
         side.pack(side="left", fill="y")
@@ -382,7 +295,7 @@ class RampForceApp(tk.Tk):
         foot.pack(side="bottom", fill="x", pady=7)
         ttk.Button(foot, text="Analyze ramps", command=self.run_analysis).pack(fill="x", pady=2)
         ttk.Button(foot, text="Restore defaults", command=self._reset).pack(fill="x", pady=2)
- 
+
         canvas = tk.Canvas(side, highlightthickness=0)
         bar = ttk.Scrollbar(side, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=bar.set)
@@ -392,9 +305,9 @@ class RampForceApp(tk.Tk):
         window = canvas.create_window((0, 0), window=fields, anchor="nw")
         fields.bind("<Configure>", lambda _: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>", lambda e: canvas.itemconfigure(window, width=e.width))
- 
+
         wheel_events = ("<MouseWheel>", "<Button-4>", "<Button-5>")
- 
+
         def on_wheel(event):                    # mouse-wheel scrolling for the input panel
             if getattr(event, "num", 0) == 4:
                 step = -1
@@ -403,17 +316,17 @@ class RampForceApp(tk.Tk):
             else:
                 step = -1 if event.delta > 0 else 1
             canvas.yview_scroll(step, "units")
- 
+
         def grab_wheel(_event):
             for seq in wheel_events:
                 canvas.bind_all(seq, on_wheel)
- 
+
         def release_wheel(_event):
             for seq in wheel_events:
                 canvas.unbind_all(seq)
         canvas.bind("<Enter>", grab_wheel)
         canvas.bind("<Leave>", release_wheel)
- 
+
         ttk.Label(fields, text="Scenario ID").pack(anchor="w")
         ttk.Entry(fields, textvariable=self.vars["scenario"]).pack(fill="x")
         ttk.Label(fields, text="Transportation mode").pack(anchor="w", pady=(7, 1))
@@ -435,208 +348,139 @@ class RampForceApp(tk.Tk):
         self.planning.pack(fill="x", pady=(13, 5))
         ttk.Label(fields, text="User-defined limits are not safety standards.", wraplength=240).pack(anchor="w")
         self._switch_mode()
- 
+
     def _on_mode_selected(self, _event=None):
         self._switch_mode()
         self.run_analysis()
- 
+
     def _switch_mode(self):
         self.slide_fields.pack_forget()
         self.wheel_fields.pack_forget()
         target = self.slide_fields if self.vars["mode"].get() == "SLIDING" else self.wheel_fields
         target.pack(fill="x", before=self.planning)
- 
-    def _card(self, parent, title): 
-        card = ttk.Frame(parent, padding=10, relief="solid")
-        card.pack(side="left", fill="both", expand=True, padx=5, pady=5)
 
-        ttk.Label(
-            card,
-            text=title,
-            style="CardTitle.TLabel"
-        ).pack(anchor="w")
+    def _card(self, parent, title):
+        """A small box of label/value rows; returns (frame, StringVars to fill)."""
+        box = ttk.LabelFrame(parent, text=title, padding=8)
+        box.columnconfigure(1, weight=1)
+        values = []
+        for row, label in enumerate(("Run", "Angle", "Steady force (keep moving)",
+                                     "Peak force (get started)", "Work")):
+            var = tk.StringVar(value="-")
+            ttk.Label(box, text=label).grid(row=row, column=0, sticky="w", padx=(0, 12))
+            ttk.Label(box, textvariable=var, style="Value.TLabel").grid(row=row, column=1, sticky="e")
+            values.append(var)
+        return box, values
 
-        value = tk.StringVar(value="—")
-
-        ttk.Label(
-            card,
-            textvariable=value,
-            style="CardValue.TLabel"
-        ).pack(anchor="w", pady=(5, 0))
-
-        return value
-
- 
     def _build_overview(self, page):
-         # Status banner
-        self.banner = tk.Frame(page, padx=12, pady=10)
-        self.banner.pack(fill="x", pady=(0, 10))
+        self.summary, self.explain_text, self.icon_var = tk.StringVar(), tk.StringVar(), tk.StringVar()
+        self.banner = tk.Frame(page, highlightthickness=3, padx=14, pady=10)
+        self.banner.pack(fill="x", pady=(0, 8))
+        self.banner.columnconfigure(1, weight=1)
+        self.banner_icon = tk.Label(self.banner, textvariable=self.icon_var, font=self.f_icon, width=2)
+        self.banner_title = tk.Label(self.banner, textvariable=self.summary, font=self.f_verdict, anchor="w")
+        self.banner_text = tk.Label(self.banner, textvariable=self.explain_text, justify="left", anchor="w",
+                                    font=self.f_default)
+        self.banner_icon.grid(row=0, column=0, rowspan=2, padx=(0, 12))
+        self.banner_title.grid(row=0, column=1, sticky="ew")
+        self.banner_text.grid(row=1, column=1, sticky="ew")
 
-        self.banner_icon = ttk.Label(self.banner, font=self.fonts["header"])
-        self.banner_icon.pack(side="left", padx=(0, 10))
-
-        banner_text = ttk.Frame(self.banner)
-        banner_text.pack(side="left", fill="x", expand=True)
-
-        self.banner_title = ttk.Label(
-            banner_text, font=self.fonts["bold"]
-        )
-        self.banner_title.pack(anchor="w")
-
-        self.banner_message = ttk.Label(
-            banner_text, wraplength=700, justify="left"
-        )
-        self.banner_message.pack(anchor="w")
-
-        # Result cards
         cards = ttk.Frame(page)
-        cards.pack(fill="x", pady=5)
+        cards.pack(fill="x", pady=(0, 6))
+        cards.columnconfigure((0, 1), weight=1, uniform="cards")
+        box1, self.card_force = self._card(cards, "Least-force ramp (the longest that qualifies)")
+        box2, self.card_work = self._card(cards, "Least-work ramp (the shortest that qualifies)")
+        box1.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
+        box2.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
 
-        self.card_vars = {
-            "least_force": self._card(cards, "Least force"),
-            "least_work": self._card(cards, "Least work"),
-            "recommended_run": self._card(cards, "Recommended run"),
-        }
-
-        # Ramp drawing area
-        ramp_frame = ttk.LabelFrame(page, text="Ramp illustration", padding=8)
-        ramp_frame.pack(fill="both", expand=True, pady=8)
-
-        self.ramp_canvas = tk.Canvas(
-            ramp_frame,
-            height=220,
-            background="white",
-            highlightthickness=1,
-            highlightbackground="#d1d5db"
-        )
-        self.ramp_canvas.pack(fill="both", expand=True)
-
-        # Custom run checker
-        custom_frame = ttk.LabelFrame(
-            page, text="Check a custom ramp run", padding=10
-        )
-        custom_frame.pack(fill="x", pady=5)
-
-        ttk.Label(
-            custom_frame,
-            text="Enter a run in metres or a slope such as 1:12:"
-        ).pack(anchor="w")
-
-        custom_entry = ttk.Entry(
-            custom_frame, textvariable=self.vars["custom"]
-        )
-        custom_entry.pack(fill="x", pady=5)
-        custom_entry.bind("<Return>", self._on_check_return)
-
-        ttk.Button(
-            custom_frame,
-            text="Check this ramp",
-            command=self.check_custom
-        ).pack(anchor="w")
-
+        self.details = tk.StringVar()
+        details = ttk.Label(page, textvariable=self.details, justify="left", style="Hint.TLabel")
+        details.pack(anchor="w")
+        toolbar = ttk.Frame(page)
+        toolbar.pack(fill="x", pady=(8, 0))
+        ttk.Label(toolbar, text="Diagram:").pack(side="left")
+        choice = ttk.Combobox(toolbar, textvariable=self.diagram_choice, state="readonly",
+                              values=["Least-force run", "Least-work run"], width=22)
+        choice.pack(side="left", padx=7)
+        choice.bind("<<ComboboxSelected>>", lambda _: self._draw_ramp())
+        self.canvas = tk.Canvas(page, bg="white", height=230, highlightthickness=1)
+        self.canvas.pack(fill="both", expand=True, pady=9)
+        self.canvas.bind("<Configure>", lambda _: self._draw_ramp())
+        line = ttk.Frame(page)
+        line.pack(fill="x", pady=4)
+        ttk.Label(line, text="Check a ramp (metres, or a slope such as 1:12):").pack(side="left")
+        entry = ttk.Entry(line, textvariable=self.vars["custom"], width=10)
+        entry.pack(side="left", padx=6)
+        entry.bind("<Return>", self._on_check_return)
+        ttk.Button(line, text="Check", command=self.check_custom).pack(side="left")
         self.custom_result = tk.StringVar(value="")
-        ttk.Label(
-            custom_frame,
-            textvariable=self.custom_result,
-            wraplength=850,
-            justify="left"
-        ).pack(anchor="w", pady=(8, 0))
+        custom = ttk.Label(page, textvariable=self.custom_result, justify="left")
+        custom.pack(anchor="w")
+        self._wrap_labels += [(self.banner_text, 140), (details, 40), (custom, 40)]
+        page.bind("<Configure>", lambda e: self._rewrap(e.width))
 
-        self._show_banner(
-            "warn",
-            "⚠",
-            "Waiting for analysis",
-            "Enter your ramp details to see the results."
-        )
- 
     def _on_check_return(self, _event=None):
         self.check_custom()
-        return "break"                           
- 
+        return "break"                          # stop Enter from also re-running the whole analysis
+
     def _build_comparison(self, page):
-        self.table_mode = tk.StringVar(value="runs")
-        self.table_note = tk.StringVar(value="")
         bar = ttk.Frame(page)
-        bar.pack(fill="x", pady=(0, 6))
-        ttk.Label(bar, text="Table shows:").pack(side="left")
-        for text, value in (("Candidate runs", "runs"), ("Standard slopes (1:N)", "slopes")):
-            ttk.Radiobutton(bar, text=text, value=value, variable=self.table_mode,
-                            command=lambda: self._update_table(self.table_mode.get())
-                            ).pack(side="left", padx=(8, 0))
-        ttk.Button(bar, text="Save graph (PNG)", command=self.save_graph).pack(side="right")
-        ttk.Button(bar, text="Save candidates (CSV)",
-                   command=lambda: self.save_csv("candidates")).pack(side="right", padx=6)
+        bar.pack(fill="x")
+        for label, handler in [
+            ("101 runs", lambda: self._update_table("candidates")),
+            ("Standard slopes", lambda: self._update_table("ratios")),
+            ("Save graph", self.save_graph),
+            ("Export runs CSV", lambda: self.save_csv("runs")),
+            ("Export summary CSV", lambda: self.save_csv("summary")),
+        ]:
+            ttk.Button(bar, text=label, command=handler).pack(side="left", padx=(0, 5))
+        self.figure = Figure(figsize=(7, 4), dpi=90)
+        self.chart = FigureCanvasTkAgg(self.figure, master=page)
+        self.chart.get_tk_widget().pack(fill="both", expand=True)
+        self.plot_force = self.figure.add_subplot(211)
+        self.plot_work = self.figure.add_subplot(212, sharex=self.plot_force)
+        self.table_label = tk.StringVar()
+        ttk.Label(page, textvariable=self.table_label).pack(anchor="w")
+        cols = [("run", "Run (m)", 85), ("angle", "Angle (°)", 90),
+                ("steady", "Steady (N)", 100), ("peak", "Peak (N)", 95),
+                ("work", "Work (J)", 105), ("status", "Constraint status", 230)]
+        self.ramp_table = self._table(page, cols)
 
-        self.fig = Figure(figsize=(8, 4.6), dpi=100, layout="constrained")
-        self.plot_canvas = FigureCanvasTkAgg(self.fig, master=page)
-        self.plot_canvas.get_tk_widget().pack(fill="both", expand=True)
-
-        ttk.Label(page, textvariable=self.table_note, style="Hint.TLabel").pack(anchor="w", pady=(6, 2))
-        holder = ttk.Frame(page)
-        holder.pack(fill="x")
-        self.ramp_table = self._table(holder, [
-            ("Ramp", 90), ("Run (m)", 80), ("Angle (\u00b0)", 80), ("Steady (N)", 90),
-            ("Peak (N)", 90), ("Work (J)", 90), ("Status", 260)])
-        self.ramp_table.configure(height=7)
- 
     def _build_steps(self, page):
-    self.steps_text = self._text_box(
-        page,
-        self.fonts["body"]
-    )
+        ttk.Label(page, text="Every step of the calculation, using your own numbers.",
+                  style="Hint.TLabel").pack(anchor="w", pady=(0, 4))
+        self.steps_text = self._text_box(page, self.f_fixed)
+        self.steps_text.tag_configure("step", font=self.f_bold, spacing1=6)
 
-    self._set_text(
-        self.steps_text,
-        "Run an analysis to see the step-by-step calculations."
-    )
- 
     def _build_references(self, page):
-        bar = ttk.Frame(page)
-        bar.pack(fill="x", pady=(0, 8))
-        ttk.Button(bar, text="Load supplied 10 cases", command=self._load_supplied).pack(side="left", padx=(0, 6))
-        ttk.Button(bar, text="Import reference CSV...", command=self.import_refs).pack(side="left", padx=(0, 6))
-        ttk.Button(bar, text="Export comparison CSV...", command=lambda: self.save_csv("refs")).pack(side="left")
-
-        self.ref_summary_var = tk.StringVar(
-            value="Load the supplied 10 reference cases or import a CSV to check implementation accuracy."
-        )
-        summary_lbl = ttk.Label(page, textvariable=self.ref_summary_var, style="Hint.TLabel", wraplength=820, justify="left")
-        summary_lbl.pack(anchor="w", pady=(0, 8))
-        self._wrap_labels.append(summary_lbl)
-
-        cols = (
-            ("Case", 65),
-            ("Mode", 85),
-            ("Ref Steady (N)", 110),
-            ("Calc Steady (N)", 115),
-            ("Steady Err", 95),
-            ("Ref Peak (N)", 105),
-            ("Calc Peak (N)", 110),
-            ("Peak Err", 95),
-            ("Ref Work (J)", 105),
-            ("Calc Work (J)", 110),
-            ("Work Err", 95),
-        )
+        intro = ttk.Label(page, text="Compare model outputs to a reference CSV (not physical measurements).")
+        intro.pack(anchor="w", pady=5)
+        buttons = ttk.Frame(page)
+        buttons.pack(fill="x", pady=8)
+        for label, func in [
+            ("Load supplied 10 cases", self._load_supplied),
+            ("Import CSV", self.import_refs),
+            ("Export comparison", lambda: self.save_csv("comparison")),
+        ]:
+            ttk.Button(buttons, text=label, command=func).pack(side="left", padx=(0, 6))
+        self.ref_label = tk.StringVar(value="No reference data loaded.")
+        ref_label = ttk.Label(page, textvariable=self.ref_label)
+        ref_label.pack(anchor="w", pady=5)
+        cols = [(k, text, 115) for k, text in [
+            ("case", "Case"), ("mode", "Mode"), ("steady", "Ref steady (N)"),
+            ("app", "App steady (N)"), ("err", "Steady error"),
+            ("peak", "Peak error"), ("work", "Work error")]]
         self.ref_table = self._table(page, cols)
- 
+        note = ttk.Label(page, text="Reference-case agreement checks the implemented equations only. "
+                         "It does not establish real-world force accuracy or safety.")
+        note.pack(anchor="w", pady=7)
+        self._wrap_labels += [(intro, 40), (ref_label, 40), (note, 40)]
+        page.bind("<Configure>", lambda e: self._rewrap(e.width), add="+")
+
     def _build_models(self, page):
-        self.models_text = self._text_box(
-            page,
-            self.fonts["body"]
-        )
+        text = self._text_box(page, self.f_fixed)
+        self._set_text(text, MODEL_TEXT)
 
-        self.models_text.pack(
-            fill="both",
-            expand=True,
-            padx=8,
-            pady=8
-        )
-
-        self._set_text(
-            self.models_text,
-            MODEL_TEXT
-        )
- 
     # ------------------------------------------------------------------ reading the boxes
     def _read_values(self):
         """Parse the boxes.  Returns (inputs, limits, errors); errors is {field_key: message}."""
@@ -657,485 +501,284 @@ class RampForceApp(tk.Tk):
                    height_m=values["height"], max_run_m=values["max_run"], **extra)
         limits = PlanningLimits(values["fmax"], values["angle"], values["accel"])
         return p, limits, field_errors(p, limits)
- 
+
     def _schedule_analysis(self, *_):
         """Wait 300 ms after the last keystroke, then recalculate (keeps typing smooth)."""
         if self._after_id is not None:
             self.after_cancel(self._after_id)
         self._after_id = self.after(300, self.run_analysis)
- 
+
     def _reset(self):
         for key, value in DEFAULTS.items():
             self.vars[key].set(value)
         self._switch_mode()
         self.run_analysis()
- 
+
     # ------------------------------------------------------------------ the one place inputs become results
     def run_analysis(self):
-        if self._after_id is not None:
-            self.after_cancel(self._after_id)
-            self._after_id = None
-
+        self._after_id = None
         inputs, limits, errors = self._read_values()
         self._show_field_errors(errors)
-        if errors or inputs is None or limits is None:
-            self.inputs = None
-            self.limits = None
+        if errors:
             self._clear_results()
             return
+        self.inputs, self.limits = inputs, limits
+        self.analysis = a = analyze(inputs, limits)
+        self.candidates = sweep(inputs, limits)
+        icon, title, text = verdict_text(inputs, limits, a)
+        self._show_banner("ok" if a.feasible else "bad", icon, title, text)
 
-        try:
-            analysis = analyze(inputs, limits)
-            rows = sweep(inputs, limits)
-        except Exception as exc:
-            self.inputs = None
-            self.limits = None
-            self._clear_results()
-            self._show_banner("bad", "\u2716", "Calculation error", str(exc))
-            return
-
-        self.inputs = inputs
-        self.limits = limits
-        self.analysis = analysis
-        self.rows = rows
-
-        icon, title, detail = verdict_text(inputs, limits, analysis)
-        level = "ok" if analysis.feasible else "bad"
-        self._show_banner(level, icon, title, detail)
-
-        c = analysis.at_max
-        card_vars = getattr(self, "card_vars", None)
-        if isinstance(card_vars, dict):
-            if analysis.feasible and analysis.at_min is not None:
-                s = analysis.at_min
-                self._fill(card_vars, {
-                    "least_force": f"{c.steady_n:.1f} N (at {c.run_m:.2f} m)",
-                    "least_work": f"{s.work_j:.0f} J (at {s.run_m:.2f} m)",
-                    "recommended_run": f"{s.run_m:.2f} – {c.run_m:.2f} m",
-                })
-            else:
-                needed = f"{analysis.x_required_m:.2f} m" if analysis.x_required_m is not None else "None"
-                self._fill(card_vars, {
-                    "least_force": f"{c.steady_n:.1f} N (at xmax)",
-                    "least_work": f"{c.work_j:.0f} J (at xmax)",
-                    "recommended_run": f"Needs {needed}",
-                })
-
-        steps = getattr(self, "steps_text", None)
-        if steps is not None:
-            self._set_text(steps, explain_steps(inputs, limits, analysis))
-
+        def values(r):
+            return [f"{r.run_m:.3f} m", f"{r.angle_deg:.2f}°", f"{r.steady_n:.1f} N",
+                    f"{r.peak_n:.1f} N (limit {limits.max_peak_n:g} N)", f"{r.work_j:.0f} J"]
+        if a.feasible:
+            self._fill(self.card_force, values(a.at_max))
+            self._fill(self.card_work, values(a.at_min))
+        else:
+            self._fill(self.card_force, ["no qualifying ramp"] + ["-"] * 4)
+            self._fill(self.card_work, ["no qualifying ramp"] + ["-"] * 4)
+        c = a.at_max
+        self.details.set(f"At your full floor space ({c.run_m:.2f} m)"
+                         f"{'' if a.feasible else ' - reference only, this ramp does not qualify'}: "
+                         f"ramp length {c.length_m:.2f} m, work {c.work_j:.0f} J, "
+                         f"payload work ratio {c.efficiency * 100:.0f}%.\n{release_note(inputs, c)}")
+        if self.custom_result.get():
+            self.check_custom(quiet=True)
         self._draw_ramp()
         self._update_graphs()
-        self._update_table(self.table_mode.get())
-        if self.vars["custom"].get().strip():
-            self.check_custom(quiet=True)
- 
+        self._update_table(self.table_choice)
+        self._set_text(self.steps_text, explain_steps(inputs, limits, a))
+        self.status.set(f"{self.vars['scenario'].get() or 'Scenario'}: "
+                        f"{len(self.candidates)} theoretical candidates; no physical forces measured.")
+
     @staticmethod
     def _fill(vars_, texts):
-                if isinstance(vars_, tk.Variable):
-            vars_.set("" if texts is None else str(texts))
+        for var, text in zip(vars_, texts):
+            var.set(text)
 
-        elif isinstance(vars_, dict):
-            if isinstance(texts, dict):
-                for key, variable in vars_.items():
-                    if key in texts:
-                        RampForceApp._fill(variable, texts[key])
-
-        elif isinstance(vars_, (list, tuple)):
-            if isinstance(texts, (list, tuple)):
-                for variable, text in zip(vars_, texts):
-                    RampForceApp._fill(variable, text)
- 
     def _clear_results(self):
-        self.analysis, self.rows = None, []
-        self._show_banner("warn", "\u26a0", "Check your inputs",
-                          "Fix the highlighted boxes to see results.")
+        """Invalid inputs: remove the old answer so nothing stale can be read, exported or checked."""
+        self.inputs = self.limits = self.analysis = None
+        self.candidates = []
+        self._show_banner("warn", "!", "Check your inputs",
+                          "Fix the boxes marked with ⚠ on the left to see the answer.")
+        self._fill(self.card_force, ["-"] * 5)
+        self._fill(self.card_work, ["-"] * 5)
+        self.details.set("")
+        self.custom_result.set("")
+        self._draw_ramp()
+        self._update_graphs()
+        self._update_table(self.table_choice)
+        self._set_text(self.steps_text, "Fix the inputs marked with a warning sign to see the step-by-step calculation.")
+        self.status.set("Inputs need attention: results cleared.")
 
-        def blank(obj):
-            if isinstance(obj, tk.Variable):
-                obj.set("")
-            elif isinstance(obj, dict):
-                for value in obj.values():
-                    blank(value)
-            elif isinstance(obj, (list, tuple)):
-                for value in obj:
-                    blank(value)
-
-        blank(getattr(self, "card_vars", None))          
-        blank(getattr(self, "custom_result", None))      
-        canvas = getattr(self, "ramp_canvas", None)      
-        if canvas is not None:
-            canvas.delete("all")
-        steps = getattr(self, "steps_text", None)      
-        if steps is not None:
-            self._set_text(steps, "")
-        self._update_table(self.table_mode.get())        
-        self._update_graphs()                           
- 
     def _show_banner(self, level, icon, title, text):
-                background, foreground = LEVEL_COLORS.get(
-            level,
-            LEVEL_COLORS["warn"]
-        )
+        bg, fg = LEVEL_COLORS[level]
+        self.banner.configure(background=bg, highlightbackground=fg, highlightcolor=fg)
+        for widget in (self.banner_icon, self.banner_title, self.banner_text):
+            widget.configure(background=bg, foreground=fg)
+        self.icon_var.set(icon)
+        self.summary.set(title)
+        self.explain_text.set(text)
 
-        self.banner.configure(background=background)
-
-        style = ttk.Style(self)
-
-        style.configure(
-            "BannerIcon.TLabel",
-            background=background,
-            foreground=foreground,
-            font=self.fonts["header"]
-        )
-
-        style.configure(
-            "BannerTitle.TLabel",
-            background=background,
-            foreground=foreground,
-            font=self.fonts["bold"]
-        )
-
-        style.configure(
-            "BannerMessage.TLabel",
-            background=background,
-            foreground=foreground,
-            font=self.fonts["body"]
-        )
-
-        self.banner_icon.configure(
-            text=icon,
-            style="BannerIcon.TLabel"
-        )
-
-        self.banner_title.configure(
-            text=title,
-            style="BannerTitle.TLabel"
-        )
-
-        self.banner_message.configure(
-            text=text,
-            style="BannerMessage.TLabel"
-        )
- 
     # ------------------------------------------------------------------ drawings
-    def _draw_ramp(self
-        canvas = getattr(self, "ramp_canvas", None)
-        if canvas is None or not canvas.winfo_exists():
+    def _draw_ramp(self):
+        cv = self.canvas
+        cv.delete("all")
+        if self.analysis is None:
             return
-        canvas.delete("all")
-        width, height = max(canvas.winfo_width(), 360), max(canvas.winfo_height(), 200)
-        font, bold = self.fonts["small"], self.fonts["bold"]
-        inputs, limits, analysis = self.inputs, self.limits, self.analysis
-        if inputs is None or limits is None or analysis is None:
-            canvas.create_text(width / 2, height / 2, font=font, fill="#4b5563",
-                               text="Enter valid inputs to see the ramp.")
-            return
+        width, height = max(cv.winfo_width(), 400), max(cv.winfo_height(), 220)
+        p, a = self.inputs, self.analysis
+        result = (a.at_min if self.diagram_choice.get() == "Least-work run" and a.at_min else a.at_max)
+        right, ground = width - 85, height - 65
+        left = 35
+        full = right - left
+        start = right - full * result.run_m / p.max_run_m
+        rise = min(140, max(32, full * p.height_m / p.max_run_m))
+        cv.create_line(15, ground, width - 12, ground, fill="#637187", width=2)
+        cv.create_polygon(start, ground, right, ground - rise, right, ground, fill="#d8f0ed")
+        cv.create_line(start, ground, right, ground - rise, fill="#185adb", width=4)
+        cv.create_line(right, ground - rise, right, ground, fill="#087f8c", width=3)
+        cv.create_text(right + 12, ground - rise / 2, text=f"h={p.height_m:g} m", anchor="w", font=self.f_default)
+        # label sits ABOVE the ramp's highest point so it never overlaps the line
+        cv.create_text((start + right) / 2, ground - rise - 16, font=self.f_default,
+                       text=f"L={result.length_m:.2f} m  ·  θ={result.angle_deg:.1f}°")
+        cv.create_line(start, ground + 16, right, ground + 16, fill="#cc7722", arrow="both", width=2)
+        cv.create_text((start + right) / 2, ground + 6, text=f"x={result.run_m:.2f} m", fill="#a66418", font=self.f_default)
+        cv.create_line(left, ground + 40, right, ground + 40, fill="#0a765d", arrow="both", width=2)
+        cv.create_text((left + right) / 2, ground + 54, text=f"xmax={p.max_run_m:.2f} m", fill="#0a765d", font=self.f_default)
+        if not a.feasible:
+            cv.create_text(15, 14, anchor="w", fill="#9b1c1c", font=self.f_bold,
+                           text="✖ NOT FEASIBLE - sketch shows your full floor space for reference only")
 
-        result, source = None, ""
-        try:
-            run = parse_run(self.vars["custom"].get(), inputs.height_m)
-            result, source = calculate_at_run(inputs, limits, run), "custom run"
-        except Exception:
-            pass
-        if result is None:
-            if analysis.feasible and analysis.at_min is not None:
-                result, source = analysis.at_min, "shortest working run"
-            else:
-                result, source = analysis.at_max, "longest available run (xmax)"
-
-        x, xmax, rise = result.run_m, inputs.max_run_m, inputs.height_m
-        ink = "#1f2933"
-        fill, edge = ("#e6f4ea", "#15803d") if result.feasible else ("#fdecea", "#b91c1c")
-
-        left, right, top, bottom = 50, 95, 45, 70
-        scale = min((width - left - right) / max(x, xmax), (height - top - bottom) / rise)
-        floor = height - bottom
-        x_foot, x_top, x_max = left, left + x * scale, left + xmax * scale
-        y_top = floor - rise * scale
-
-        canvas.create_rectangle(x_foot, floor, x_max, floor + 6, fill="#e2e8f0", outline="")
-        canvas.create_line(x_foot, floor, max(x_top, x_max), floor, width=2, fill=ink)
-        canvas.create_polygon(x_foot, floor, x_top, floor, x_top, y_top, fill=fill, outline=edge, width=3)
-        canvas.create_line(x_top, floor, x_top, y_top, width=2, fill=ink)
-
-        canvas.create_text(x_top + 8, (floor + y_top) / 2, anchor="w", font=font, fill=ink,
-                           text=f"h = {rise:g} m")
-        canvas.create_text((x_foot + x_top) / 2 - 8, (floor + y_top) / 2 - 10, anchor="e", font=font,
-                           fill=edge, text=f"L = {result.length_m:.2f} m")
-        radius = min(36, max(14, (x_top - x_foot) / 3))
-        canvas.create_arc(x_foot - radius, floor - radius, x_foot + radius, floor + radius, start=0,
-                          extent=result.angle_deg, style="arc", outline=ink, width=2)
-        canvas.create_text(x_foot + radius + 6, floor - 9, anchor="w", font=font, fill=ink,
-                           text=f"{result.angle_deg:.1f}\u00b0")
-
-        def dimension(x_end, y, text, color):
-            canvas.create_line(x_foot, y, x_end, y, arrow="both", fill=color, width=2)
-            canvas.create_line(x_foot, floor, x_foot, y + 4, fill=color, dash=(2, 3))
-            canvas.create_line(x_end, floor, x_end, y + 4, fill=color, dash=(2, 3))
-            canvas.create_text((x_foot + x_end) / 2, y + 12, font=font, fill=color, text=text)
-
-        dimension(x_top, floor + 16, f"x = {x:.2f} m", edge)
-        dimension(x_max, floor + 40, f"xmax = {xmax:.2f} m", ink)
-
-        verdict = "\u2714 Meets your limits" if result.feasible else f"\u2716 {result.plain_status}"
-        canvas.create_text(12, 10, anchor="nw", font=bold, fill=edge, text=verdict)
-        canvas.create_text(12, 28, anchor="nw", font=font, fill="#4b5563", text=f"Showing: {source}")
- 
     def check_custom(self, quiet=False):
-        def show(text):
-            var = getattr(self, "custom_result", None)
-            if var is not None:
-                var.set(text)
-
-        i, l, errors = self._read_values()
-        if errors:
-            show("Fix the highlighted input boxes first.")
-            return None
+        """'Check a ramp': a run in metres or a slope such as 1:12, tested against all three limits."""
+        if self.inputs is None:
+            if not quiet:
+                messagebox.showwarning("Check your inputs", "Please fix the boxes marked with ⚠ first.", parent=self)
+            return
         try:
-            run = parse_run(self.vars["custom"].get(), i.height_m)
-        except ValueError as exc:
-            show("Type a run in metres (for example 2.5) or a slope such as 1:12, then press Enter."
-                 if quiet else f"\u26a0 {exc}")
-            return None
-        r = calculate_at_run(i, l, run)
-        mark = lambda ok: "\u2714" if ok else "\u2716"
-        show("\n".join([
-            (f"{mark(r.feasible)} This ramp works within your limits." if r.feasible
-             else f"{mark(False)} This ramp does not meet your limits.")
-            + f"  (run {r.run_m:.2f} m, slope {r.angle_deg:.1f}\u00b0, ramp length {r.length_m:.2f} m)",
-            f"{mark(r.space_ok)} Space: needs {r.run_m:.2f} m of floor; you have {i.max_run_m:.2f} m.",
-            f"{mark(r.angle_ok)} Slope: {r.angle_deg:.1f}\u00b0 against your limit of {l.max_angle_deg:g}\u00b0.",
-            f"{mark(r.force_ok)} First push: {r.peak_n:.0f} N against your limit of {l.max_peak_n:g} N.",
-            f"Keeping it moving takes {r.steady_n:.0f} N; the total work is {r.work_j:.0f} J.",
-        ]))
-        return r
- 
-    def _update_graphs(self):
-        fig = getattr(self, "fig", None)
-        if fig is None:
+            run = parse_run(self.vars["custom"].get(), self.inputs.height_m)
+            r = calculate_at_run(self.inputs, self.limits, run)
+        except ValueError as error:
+            self.custom_result.set(f"⚠ {error}")
             return
-        a, i, l = (getattr(self, name, None) for name in ("analysis", "inputs", "limits"))
-        size = self.text_size - 1
-        fig.clear()
-        if a is None or i is None or l is None:
-            fig.text(0.5, 0.5, "Enter valid inputs to see the graphs.", ha="center", va="center",
-                     fontsize=size + 1)
-            self.plot_canvas.draw_idle()
-            return
-        rows = list(self.rows) if a.feasible else what_if_sweep(i, l)
-        if not rows:
-            fig.text(0.5, 0.5, "No data to plot.", ha="center", va="center", fontsize=size + 1)
-            self.plot_canvas.draw_idle()
-            return
+        mark = "✔ FEASIBLE" if r.feasible else "✖ NOT FEASIBLE"
+        self.custom_result.set(f"{mark}: {r.plain_status}\n"
+                               f"Run {run:.2f} m, angle {r.angle_deg:.1f}°, steady {r.steady_n:.0f} N, "
+                               f"peak {r.peak_n:.0f} N (limit {self.limits.max_peak_n:g} N), work {r.work_j:.0f} J")
 
-        c_steady, c_peak, c_work, c_grey, c_bad = "#1d4ed8", "#c2410c", "#15803d", "#6b7280", "#b91c1c"
+    def _update_graphs(self):
+        top, bottom = self.plot_force, self.plot_work
+        top.clear()
+        bottom.clear()
+        for old_legend in list(self.figure.legends):      # figure-level legend from the previous drawing
+            old_legend.remove()
+        fs = max(8, self.base_size - 2)
+        if self.inputs is None:
+            top.text(.5, .5, "Fix the inputs marked with a warning sign to see the graph.",
+                     ha="center", va="center", transform=top.transAxes, fontsize=fs)
+            self.chart.draw_idle()
+            return
+        p, lim, a = self.inputs, self.limits, self.analysis
+        # When the angle limit cannot fit in the floor space there are no qualifying runs; the graph
+        # then shows what-if curves out to the run that WOULD be needed, so the reason is visible.
+        what_if = not self.candidates
+        rows = self.candidates or what_if_sweep(p, lim)
         x = [r.run_m for r in rows]
-        ax_f, ax_w = fig.subplots(2, 1, sharex=True)
-        ax_f.plot(x, [r.steady_n for r in rows], "-", color=c_steady, linewidth=2,
-                  label="Steady force (keep moving)")
-        ax_f.plot(x, [r.peak_n for r in rows], "--", color=c_peak, linewidth=2,
-                  label="Peak force (get started)")
-        ax_f.axhline(l.max_peak_n, color=c_grey, linestyle=":", linewidth=1.5,
-                     label=f"Your force limit ({l.max_peak_n:g} N)")
-        ax_w.plot(x, [r.work_j for r in rows], "-", color=c_work, linewidth=2, label="Work")
-        for ax in (ax_f, ax_w):
-            ax.axvline(i.max_run_m, color=c_grey, linestyle="-.", linewidth=1.2,
-                       label=f"Available run xmax ({i.max_run_m:g} m)")
-            if not a.feasible and a.x_required_m is not None:
-                ax.axvline(a.x_required_m, color=c_bad, linestyle=":", linewidth=1.5,
-                           label=f"Run needed ({a.x_required_m:.2f} m)")
-        if a.feasible and a.x_required_m > x[0]:
-            for ax in (ax_f, ax_w):
-                ax.axvspan(x[0], a.x_required_m, color=c_bad, alpha=0.08, linewidth=0,
-                           label="Breaks a limit" if ax is ax_f else None)
-        if a.feasible:
-            ax_f.plot([a.at_max.run_m], [a.at_max.steady_n], "o", color=c_steady, markersize=8,
-                      label=f"Least force: {a.at_max.run_m:.2f} m")
-            ax_w.plot([a.at_min.run_m], [a.at_min.work_j], "s", color=c_work, markersize=8,
-                      label=f"Least work: {a.at_min.run_m:.2f} m")
-            ax_f.set_title(f"Feasible: runs from {a.x_required_m:.2f} m to {i.max_run_m:.2f} m work",
-                           fontsize=size + 1)
-        else:
-            ax_f.set_title("What-if curves: NO ramp meets all your limits (diagnostic only)",
-                           fontsize=size + 1)
-        ax_f.set_ylabel("Force (N)", fontsize=size)
-        ax_w.set_ylabel("Work (J)", fontsize=size)
-        ax_w.set_xlabel("Ramp run x (m)", fontsize=size)
-        for ax in (ax_f, ax_w):
-            ax.grid(True, alpha=0.3)
-            ax.tick_params(labelsize=size)
-            ax.legend(fontsize=max(6, size - 1), loc="best")
-        self.plot_canvas.draw_idle()
- 
-    def _update_table(self, which):
-        tree = getattr(self, "ramp_table", None)
-        if tree is None:
-            return
-        tree.delete(*tree.get_children())
-        a, i, l = (getattr(self, name, None) for name in ("analysis", "inputs", "limits"))
-        if a is None or i is None or l is None:
-            self.table_note.set("")
-            return
-        if which in ("slopes", "standard", "reference"):
-            entries = list(reference_slopes(i, l))
-            self.table_note.set("Standard slopes 1:N (run = N \u00d7 height). \u2714 means all three limits are met.")
-        else:
-            rows = list(self.rows) if a.feasible else what_if_sweep(i, l)
-            entries = [(f"Run {n}", r) for n, r in enumerate(rows, 1)]
+        top.plot(x, [r.steady_n for r in rows], color="#1f5fa8", ls="-", lw=2.2, label="Steady force (keep moving)")
+        top.plot(x, [r.peak_n for r in rows], color="#c2410c", ls="--", lw=2.2, label="Peak force (get started)")
+        top.axhline(lim.max_peak_n, color="#7f1d1d", ls=":", lw=2, label=f"Your peak limit ({lim.max_peak_n:g} N)")
+        bottom.plot(x, [r.work_j for r in rows], color="#1f5fa8", lw=2.2, label="Mechanical work")
+        for ax in (top, bottom):
+            ax.axvline(p.max_run_m, color="#444444", ls="-.", lw=1.2, label="Your floor space" if ax is top else None)
             if a.feasible:
-                self.table_note.set(f"{len(rows)} candidate runs from the angle-limit run to xmax. "
-                                    "\u2714 means all three limits are met.")
-            else:
-                self.table_note.set("No ramp meets all limits. These what-if runs are diagnostic only.")
-        for label, r in entries:
-            icon = "\u2714" if r.feasible else "\u2716"
-            tree.insert("", "end", tags=("ok" if r.feasible else "bad",), values=(
-                label, f"{r.run_m:.2f}", f"{r.angle_deg:.1f}", f"{r.steady_n:.1f}",
-                f"{r.peak_n:.1f}", f"{r.work_j:.0f}", f"{icon} {r.plain_status}"))
- 
+                ax.axvspan(a.x_required_m, p.max_run_m, color="#c9f1df", alpha=0.5,
+                           label="Qualifying runs" if ax is top else None)
+            elif what_if:
+                needed = a.x_required_m or a.x_angle_m
+                ax.axvline(needed, color="#7f1d1d", ls=":", lw=1.4,
+                           label="Run that would be needed" if ax is top else None)
+        if what_if:
+            top.set_title("No run satisfies the angle limit within your floor space - curves shown to explain why",
+                          fontsize=fs)
+        # legend BELOW the plots so it never covers the curves
+        handles, labels = top.get_legend_handles_labels()
+        self.figure.legend(handles, labels, loc="lower center", ncol=3, fontsize=fs, frameon=False)
+        top.set_ylabel("Force (N)", fontsize=fs)
+        bottom.set_ylabel("Work (J)", fontsize=fs)
+        bottom.set_xlabel("Horizontal run x (m)", fontsize=fs)
+        for ax in (top, bottom):
+            ax.grid(alpha=.25)
+            ax.tick_params(labelsize=fs)
+        self.figure.tight_layout(rect=(0, 0.14, 1, 1))
+        self.chart.draw_idle()
+
+    def _update_table(self, which):
+        self.table_choice = which
+        self.ramp_table.delete(*self.ramp_table.get_children())
+        if self.inputs is None:
+            self.table_label.set("Fix the inputs marked with a warning sign to see the table.")
+            return
+        rows = ([("", item) for item in self.candidates] if which == "candidates"
+                else reference_slopes(self.inputs, self.limits))
+        if which == "candidates" and not rows:
+            self.table_label.set("No run satisfies the angle limit within your floor space, so there is nothing to list.")
+            return
+        self.table_label.set(f"{len(rows)} theoretical configurations; 'Feasible' means all three of your limits pass.")
+        for ratio, r in rows:
+            run_label = f"{r.run_m:.3f}" + (f" ({ratio})" if ratio else "")
+            self.ramp_table.insert("", "end", values=(run_label, f"{r.angle_deg:.2f}",
+                f"{r.steady_n:.3f}", f"{r.peak_n:.3f}", f"{r.work_j:.2f}", r.plain_status))
+
     # ------------------------------------------------------------------ files
     def _choose_file(self, filename, kind="csv", save=True):
-        if kind == "png":
-            filetypes = [("PNG image", "*.png"), ("All files", "*.*")]
-            defaultext = ".png"
-        else:
-            filetypes = [("CSV file", "*.csv"), ("All files", "*.*")]
-            defaultext = ".csv"
-
+        files = [("CSV files", "*.csv")] if kind == "csv" else [("PNG image", "*.png")]
+        args = dict(parent=self, filetypes=files, title="Save file" if save else "Open file")
         if save:
-            return filedialog.asksaveasfilename(
-                parent=self,
-                initialfile=filename,
-                defaultextension=defaultext,
-                filetypes=filetypes,
-            )
-        return filedialog.askopenfilename(
-            parent=self,
-            initialfile=filename,
-            filetypes=filetypes,
-        )
- 
+            return filedialog.asksaveasfilename(defaultextension=f".{kind}", initialfile=filename, **args)
+        return filedialog.askopenfilename(**args)
+
     def save_graph(self):
-        if self.fig is None:
-            messagebox.showwarning("No graph", "Run a valid analysis before saving the graph.", parent=self)
-            return
-        scen = self.vars["scenario"].get().strip() or "S01"
-        path = self._choose_file(f"{scen}_rampforce_plot.png", kind="png", save=True)
-        if not path:
-            return
-        try:
-            self.fig.savefig(path, dpi=150, bbox_inches="tight")
-            messagebox.showinfo("Graph saved", f"Saved plot image to:\n{path}", parent=self)
-        except OSError as exc:
-            messagebox.showerror("Save failed", f"Could not save graph:\n{exc}", parent=self)
- 
-    def save_csv(self, kind):
-        scen = self.vars["scenario"].get().strip() or "S01"
-        if kind == "refs":
-            if not self.ref_rows:
-                messagebox.showwarning("No reference data", "Load or import reference cases first.", parent=self)
-                return
-            path = self._choose_file(f"{scen}_reference_comparison.csv", kind="csv", save=True)
-            if not path:
-                return
+        path = self._choose_file("RampForce_graph.png", kind="png")
+        if path:
             try:
-                export_comparison(path, self.ref_rows)
-                messagebox.showinfo("CSV saved", f"Saved reference comparison to:\n{path}", parent=self)
-            except (OSError, ValueError) as exc:
-                messagebox.showerror("Export failed", str(exc), parent=self)
-            return
+                self.figure.savefig(path, dpi=180)
+                self.status.set(f"Saved: {path}")
+            except OSError as error:
+                messagebox.showerror("Save failed", str(error), parent=self)
 
-        inputs, limits, errors = self._read_values()
-        if errors or inputs is None or limits is None:
-            messagebox.showwarning("Invalid inputs", "Fix the highlighted input errors before exporting.", parent=self)
+    def save_csv(self, kind):
+        if kind == "comparison" and not self.reference_rows:
+            messagebox.showwarning("No comparison", "Load a reference CSV first.", parent=self)
             return
-
-        default_name = f"{scen}_summary.csv" if kind == "summary" else f"{scen}_candidates.csv"
-        path = self._choose_file(default_name, kind="csv", save=True)
+        if kind != "comparison" and self.inputs is None:
+            messagebox.showwarning("Check your inputs", "Please fix the boxes marked with ⚠ first.", parent=self)
+            return
+        if kind == "runs" and not self.candidates:
+            messagebox.showinfo("Nothing to export", "No run satisfies the angle limit within your floor space, "
+                                "so there are no candidate rows to export.", parent=self)
+            return
+        scenario = self.vars["scenario"].get().strip() or "scenario"
+        path = self._choose_file(f"RampForce_{scenario}_{kind}.csv")
         if not path:
             return
         try:
-            if kind == "summary":
-                export_summary(path, inputs, limits, scen)
-                messagebox.showinfo("CSV saved", f"Saved scenario summary to:\n{path}", parent=self)
+            if kind == "runs":
+                count = export_candidates(path, self.inputs, self.limits, scenario)
+                self.status.set(f"Exported {count} candidate rows to {path}")
+            elif kind == "summary":
+                export_summary(path, self.inputs, self.limits, scenario)
+                self.status.set(f"Saved summary: {path}")
             else:
-                count = export_candidates(path, inputs, limits, scen)
-                messagebox.showinfo("CSV saved", f"Saved {count} candidate rows to:\n{path}", parent=self)
-        except (OSError, ValueError) as exc:
-            messagebox.showerror("Export failed", str(exc), parent=self)
- 
+                export_comparison(path, self.reference_rows)
+                self.status.set(f"Saved reference comparison: {path}")
+        except (OSError, ValueError) as error:
+            messagebox.showerror("Export failed", str(error), parent=self)
+
     def import_refs(self):
-        path = self._choose_file("reference_cases.csv", kind="csv", save=False)
+        path = self._choose_file("", save=False)
         if path:
             self._load_refs(path)
- 
+
     def _load_supplied(self):
-        sample_path = BASE / "samples" / "reference_cases.csv"
-        if sample_path.is_file():
-            self._load_refs(sample_path)
-            return
-        try:
-            rows = compare_reference_text(SUPPLIED_REFERENCE_CSV)
-        except ValueError as exc:
-            messagebox.showerror("Reference error", str(exc), parent=self)
-            return
-        self._show_references(rows)
- 
+        """The 10 supplied cases: from samples/ if present, otherwise from the copy built into datasets.py."""
+        path = BASE / "samples" / "reference_cases_v2.csv"
+        if path.exists():
+            self._load_refs(path)
+        else:
+            self._show_references(compare_reference_text(SUPPLIED_REFERENCE_CSV))
+
     def _load_refs(self, path):
         try:
             rows = compare_references(path)
-        except (OSError, ValueError) as exc:
-            messagebox.showerror("Could not load reference CSV", str(exc), parent=self)
+        except (OSError, ValueError) as error:
+            messagebox.showerror("Reference CSV error", str(error), parent=self)
             return
         self._show_references(rows)
- 
+
     def _show_references(self, rows):
-        self.ref_rows = rows
-        for item in self.ref_table.get_children():
-            self.ref_table.delete(item)
-
+        self.reference_rows = rows
+        self.ref_table.delete(*self.ref_table.get_children())
         for r in rows:
-            self.ref_table.insert("", "end", values=(
-                r["case"],
-                r["mode"],
-                f"{r['ref_steady']:.3f}",
-                f"{r['calc_steady']:.3f}",
-                f"{r['steady_err']:.6f}",
-                f"{r['ref_peak']:.3f}",
-                f"{r['calc_peak']:.3f}",
-                f"{r['peak_err']:.6f}",
-                f"{r['ref_work']:.3f}",
-                f"{r['calc_work']:.3f}",
-                f"{r['work_err']:.6f}",
-            ))
-
+            self.ref_table.insert("", "end", values=(r["case"], r["mode"],
+                f'{r["ref_steady"]:.4f}', f'{r["calc_steady"]:.4f}',
+                f'{r["steady_err"]:.6f}', f'{r["peak_err"]:.6f}', f'{r["work_err"]:.6f}'))
         n = len(rows)
-        mae_steady = sum(r["steady_err"] for r in rows) / n
-        mae_peak = sum(r["peak_err"] for r in rows) / n
-        mae_work = sum(r["work_err"] for r in rows) / n
-        self.ref_summary_var.set(
-            f"Loaded {n} reference cases — Mean Absolute Error: "
-            f"Steady = {mae_steady:.6f} N, Peak = {mae_peak:.6f} N, Work = {mae_work:.6f} J "
-            "(implementation QA against declared equations)."
-        )
- 
- 
+        self.ref_label.set(f"{n} cases  |  MAE steady: {sum(r['steady_err'] for r in rows)/n:.8f} N  |  "
+                           f"MAE peak: {sum(r['peak_err'] for r in rows)/n:.8f} N  |  "
+                           f"MAE work: {sum(r['work_err'] for r in rows)/n:.8f} J")
+
+
 def _enable_sharp_text_on_windows():
-    if sys.platform != "win32":
-        return
+    """Without this, Windows blurs the whole window on high-resolution screens."""
     try:
-        import ctypes
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)
-    except Exception:
-        try:
-            import ctypes
-            ctypes.windll.user32.SetProcessDPIAware()
-        except Exception:
-            pass
- 
- 
+        from ctypes import windll              # only exists on Windows
+        windll.shcore.SetProcessDpiAwareness(1)
+    except (ImportError, AttributeError, OSError):
+        pass
+
+
 if __name__ == "__main__":
     _enable_sharp_text_on_windows()
     RampForceApp().mainloop()
