@@ -79,25 +79,42 @@ class RampResult:
  
     @property
     def feasible(self) -> bool:
-        # === Ace — RampResult.feasible ===
-        # GOAL: True only if space_ok, angle_ok and force_ok are all true.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Ace: implement RampResult.feasible")
+        return self.space_ok and self.angle_ok and self.force_ok
+     
+    @property
+    def status(self) -> str:      
+        if self.feasible:
+        return "FEASIBLE"
+
+        if not self.space_ok:
+            return "FAIL: SPACE"
+
+        if not self.angle_ok:
+            return "FAIL: ANGLE"
+
+        if not self.force_ok:
+            return "FAIL: FORCE"
+
+        return "FEASIBLE"
+    
  
     @property
-    def status(self) -> str:
-        # === Ace — RampResult.status ===
-        # GOAL: Return the existing machine-readable FEASIBLE / FAIL: SPACE, ANGLE, FORCE status.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Ace: implement RampResult.status")
- 
-    @property
-    def plain_status(self) -> str:
-        # === Ace — RampResult.plain_status ===
-        # GOAL: Return the existing friendly wording for failed conditions.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Ace: implement RampResult.plain_status")
- 
+    def plain_status(self) -> str:        
+        if self.feasible:
+        return "This ramp meets all planning limits."
+
+    messages = []
+
+    if not self.space_ok:
+        messages.append("The ramp needs more floor space.")
+
+    if not self.angle_ok:
+        messages.append("The ramp is too steep.")
+
+    if not self.force_ok:
+        messages.append("The required pushing force is too high.")
+
+    return " ".join(messages)
  
 @dataclass(frozen=True)
 class Analysis:
@@ -165,10 +182,93 @@ def validate(inputs: Inputs, limits: PlanningLimits) -> None:
  
  
 def calculate_at_run(inputs: Inputs, limits: PlanningLimits, run_m: float) -> RampResult:
-    # === Ace — calculate_at_run ===
-    # GOAL: Construct RampResult for one given run; preserve geometry, steady/peak forces, work, and holding semantics.
-    # Keep function name/parameters/return contract unchanged.
-    raise NotImplementedError("Ace: implement calculate_at_run")
+    mass = inputs.total_mass_kg
+    height = inputs.height_m
+
+    # Calculate ramp geometry
+    length = math.hypot(run_m, height)
+    angle = math.atan2(height, run_m)
+    angle_deg = math.degrees(angle)
+
+    # Calculate forces
+    weight = mass * G
+    normal = weight * math.cos(angle)
+    gravity = weight * math.sin(angle)
+
+    # Calculate resistance and steady force
+    coefficient = inputs.kinetic_coefficient
+    resistance = coefficient * normal
+    steady = gravity + resistance
+
+    # Additional force needed for acceleration
+    inertial = mass * limits.acceleration_mps2
+
+    # Calculate breakaway and holding values
+    if inputs.mode == "SLIDING":
+        breakaway = weight * (
+            math.sin(angle) + inputs.mu_s * math.cos(angle)
+        )
+
+        holding_force = max(
+            0.0,
+            gravity - inputs.mu_s * normal
+        )
+
+        holding_at_rest = gravity <= inputs.mu_s * normal + EPS
+
+        peak = max(breakaway, steady + inertial)
+
+    else:
+        breakaway = None
+        holding_force = None
+        holding_at_rest = None
+
+        peak = steady + inertial
+
+    # Calculate work and efficiency
+    work = steady * length
+    useful_work = weight * height
+
+    efficiency = (
+        useful_work / work if work > EPS else 0.0
+    )
+
+    # Calculate mechanical advantage
+    ideal_ma = length / height if height > EPS else 0.0
+
+    actual_ma = (
+        weight / steady if steady > EPS else 0.0
+    )
+
+    # Check planning limits
+    space_ok = run_m <= inputs.max_run_m + EPS
+
+    angle_ok = angle_deg <= limits.max_angle_deg + EPS
+
+    force_ok = peak <= limits.max_peak_n + EPS
+
+    # Return all calculated results
+    return RampResult(
+        run_m=run_m,
+        length_m=length,
+        angle_deg=angle_deg,
+        normal_n=normal,
+        gravity_n=gravity,
+        resistance_n=resistance,
+        steady_n=steady,
+        breakaway_n=breakaway,
+        inertial_n=inertial,
+        peak_n=peak,
+        work_j=work,
+        efficiency=efficiency,
+        ideal_mechanical_advantage=ideal_ma,
+        actual_mechanical_advantage=actual_ma,
+        holding_force_n=holding_force,
+        holding_at_rest=holding_at_rest,
+        space_ok=space_ok,
+        angle_ok=angle_ok,
+        force_ok=force_ok,
+    )
  
  
 def theta_for_force(total_mass_kg: float, coefficient: float, added_force_n: float, force_limit_n: float) -> float:
@@ -273,9 +373,26 @@ def what_if_sweep(inputs: Inputs, limits: PlanningLimits, points: int = 60) -> l
     return [calculate_at_run(inputs, limits, start + i * step) for i in range(points)]
  
  
-def release_note(inputs: Inputs, result: RampResult) -> str:
-    # === Ace — release_note ===
-    # GOAL: Give the existing cautionary release wording; do NOT infer wheeled braking/holding from Crr.
-    # Keep function name/parameters/return contract unchanged.
-    raise NotImplementedError("Ace: implement release_note")
+def release_note(inputs: Inputs, result: RampResult) -> str:  
+    if inputs.mode == "WHEELED":
+        return (
+            "CAUTION: This is a theoretical rolling-resistance estimate. "
+            "It does not predict stationary wheel holding or braking. "
+            "A released cart may roll backward, so keep it secured "
+            "and use appropriate brakes or restraints."
+        )
+
+    if result.holding_at_rest:
+        return (
+            "CAUTION: The model estimates that static friction can hold "
+            "the load at rest on this ramp. This is a theoretical estimate, "
+            "not a guarantee of safety. Keep the load secured."
+        )
+
+    return (
+        "CAUTION: The model estimates that static friction alone may not "
+        "hold the load at rest on this ramp. Use an appropriate restraint "
+        "and do not release the load unsecured."
+    )
+
  
