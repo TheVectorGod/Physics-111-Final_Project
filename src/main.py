@@ -526,10 +526,15 @@ class RampForceApp(tk.Tk):
         self.ramp_table.configure(height=7)
  
     def _build_steps(self, page):
-        # === Ace — RampForceApp._build_steps ===
-        # GOAL: Build the How it was calculated tab using explain_steps.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Ace: implement RampForceApp._build_steps")
+    self.steps_text = self._text_box(
+        page,
+        self.fonts["body"]
+    )
+
+    self._set_text(
+        self.steps_text,
+        "Run an analysis to see the step-by-step calculations."
+    )
  
     def _build_references(self, page):
         # === Christian — RampForceApp._build_references ===
