@@ -820,11 +820,68 @@ class RampForceApp(tk.Tk):
         )
  
     # ------------------------------------------------------------------ drawings
-    def _draw_ramp(self):
-        # === Ace — RampForceApp._draw_ramp ===
-        # GOAL: Draw scaled ramp geometry, x and xmax labels on Tk Canvas.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Ace: implement RampForceApp._draw_ramp")
+    def _draw_ramp(self
+        canvas = getattr(self, "ramp_canvas", None)
+        if canvas is None or not canvas.winfo_exists():
+            return
+        canvas.delete("all")
+        width, height = max(canvas.winfo_width(), 360), max(canvas.winfo_height(), 200)
+        font, bold = self.fonts["small"], self.fonts["bold"]
+        inputs, limits, analysis = self.inputs, self.limits, self.analysis
+        if inputs is None or limits is None or analysis is None:
+            canvas.create_text(width / 2, height / 2, font=font, fill="#4b5563",
+                               text="Enter valid inputs to see the ramp.")
+            return
+
+        result, source = None, ""
+        try:
+            run = parse_run(self.vars["custom"].get(), inputs.height_m)
+            result, source = calculate_at_run(inputs, limits, run), "custom run"
+        except Exception:
+            pass
+        if result is None:
+            if analysis.feasible and analysis.at_min is not None:
+                result, source = analysis.at_min, "shortest working run"
+            else:
+                result, source = analysis.at_max, "longest available run (xmax)"
+
+        x, xmax, rise = result.run_m, inputs.max_run_m, inputs.height_m
+        ink = "#1f2933"
+        fill, edge = ("#e6f4ea", "#15803d") if result.feasible else ("#fdecea", "#b91c1c")
+
+        left, right, top, bottom = 50, 95, 45, 70
+        scale = min((width - left - right) / max(x, xmax), (height - top - bottom) / rise)
+        floor = height - bottom
+        x_foot, x_top, x_max = left, left + x * scale, left + xmax * scale
+        y_top = floor - rise * scale
+
+        canvas.create_rectangle(x_foot, floor, x_max, floor + 6, fill="#e2e8f0", outline="")
+        canvas.create_line(x_foot, floor, max(x_top, x_max), floor, width=2, fill=ink)
+        canvas.create_polygon(x_foot, floor, x_top, floor, x_top, y_top, fill=fill, outline=edge, width=3)
+        canvas.create_line(x_top, floor, x_top, y_top, width=2, fill=ink)
+
+        canvas.create_text(x_top + 8, (floor + y_top) / 2, anchor="w", font=font, fill=ink,
+                           text=f"h = {rise:g} m")
+        canvas.create_text((x_foot + x_top) / 2 - 8, (floor + y_top) / 2 - 10, anchor="e", font=font,
+                           fill=edge, text=f"L = {result.length_m:.2f} m")
+        radius = min(36, max(14, (x_top - x_foot) / 3))
+        canvas.create_arc(x_foot - radius, floor - radius, x_foot + radius, floor + radius, start=0,
+                          extent=result.angle_deg, style="arc", outline=ink, width=2)
+        canvas.create_text(x_foot + radius + 6, floor - 9, anchor="w", font=font, fill=ink,
+                           text=f"{result.angle_deg:.1f}\u00b0")
+
+        def dimension(x_end, y, text, color):
+            canvas.create_line(x_foot, y, x_end, y, arrow="both", fill=color, width=2)
+            canvas.create_line(x_foot, floor, x_foot, y + 4, fill=color, dash=(2, 3))
+            canvas.create_line(x_end, floor, x_end, y + 4, fill=color, dash=(2, 3))
+            canvas.create_text((x_foot + x_end) / 2, y + 12, font=font, fill=color, text=text)
+
+        dimension(x_top, floor + 16, f"x = {x:.2f} m", edge)
+        dimension(x_max, floor + 40, f"xmax = {xmax:.2f} m", ink)
+
+        verdict = "\u2714 Meets your limits" if result.feasible else f"\u2716 {result.plain_status}"
+        canvas.create_text(12, 10, anchor="nw", font=bold, fill=edge, text=verdict)
+        canvas.create_text(12, 28, anchor="nw", font=font, fill="#4b5563", text=f"Showing: {source}")
  
     def check_custom(self, quiet=False):
         def show(text):
