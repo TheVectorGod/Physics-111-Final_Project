@@ -59,7 +59,6 @@ Give Christian a reliable `_read_values()` result and Ace valid Inputs/PlanningL
 5. Do not alter `datasets.py` or `explain.py` during this exercise.
 6. After merging, run `python check_structure.py`, unit tests, and the real GUI. Syntax checks alone do not verify behavior.
 
-**Existing 101-point functions are preserved for original-file compatibility;** redesigning them to match the newer three-ramp manuscript approach should be a separate group decision.
 
 # Member 2 (Ace) — Physics computations and understandable results
 
@@ -98,8 +97,6 @@ Provide Cedric `calculate_at_run` and complete RampResult fields; provide Member
 5. Do not alter `datasets.py` or `explain.py` during this exercise.
 6. After merging, run `python check_structure.py`, unit tests, and the real GUI. Syntax checks alone do not verify behavior.
 
-**Existing 101-point functions are preserved for original-file compatibility;** redesigning them to match the newer three-ramp manuscript approach should be a separate group decision.
-
 # Member 3 (Cedric) — Feasibility, calculus, graphs, and display styling
 
 **Goal:** Find the feasible-run interval, support the analytic endpoint choices, and visualize comparisons.
@@ -115,7 +112,6 @@ Provide Cedric `calculate_at_run` and complete RampResult fields; provide Member
 
 - `RampForceApp._build_comparison` — Build Matplotlib plots, comparison controls, and ramp table.
 - `RampForceApp._update_graphs` — Draw steady/peak forces and work; handle infeasible cases with what-if data.
-- `RampForceApp._update_table` — Populate 101-run or standard-slope results with readable status values.
 - `RampForceApp.check_custom` — Evaluate a custom run as metres or 1:N; show plain-language constraints and results.
 - `RampForceApp._on_check_return` — Run custom check and prevent global Enter handling from repeating analysis.
 - `RampForceApp._clear_results` — Clear old verdict, data tables, graph and explanation when input is invalid.
@@ -139,15 +135,12 @@ Christian calls `analyze` and uses the table/plot widgets; Member 2 builds the o
 5. Do not alter `datasets.py` or `explain.py` during this exercise.
 6. After merging, run `python check_structure.py`, unit tests, and the real GUI. Syntax checks alone do not verify behavior.
 
-**Existing 101-point functions are preserved for original-file compatibility;** redesigning them to match the newer three-ramp manuscript approach should be a separate group decision.
-
 # Member 4 (Christian) — Sampling, app coordination, datasets, and exports
 
 **Goal:** Make the whole app start, coordinate backend to GUI, retain the existing comparison sampling, and save/review datasets.
 
 ## Assigned functions in `physics.py`
 
-- `sweep` — Reproduce the existing 101-point angle-cap-to-xmax comparison list; preserve old CSV behavior for now.
 - `reference_slopes` — Evaluate the existing standard 1:N slope list from RATIOS.
 - `what_if_sweep` — Return diagnostic curve points even when the angle-cap run exceeds available space.
 
@@ -179,5 +172,3 @@ Christian integrates the completed functions from all three teammates; export us
 4. If you need another person’s function or a specific widget name, coordinate the contract; do not rename it on your own.
 5. Do not alter `datasets.py` or `explain.py` during this exercise.
 6. After merging, run `python check_structure.py`, unit tests, and the real GUI. Syntax checks alone do not verify behavior.
-
-**Existing 101-point functions are preserved for original-file compatibility;** redesigning them to match the newer three-ramp manuscript approach should be a separate group decision.
