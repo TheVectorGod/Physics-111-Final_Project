@@ -257,20 +257,54 @@ class RampForceApp(tk.Tk):
         box.columnconfigure(0, weight=1)
         return tree
  
-    @staticmethod
+       @staticmethod
     def _text_box(parent, font):
-        # === Ace — RampForceApp._text_box ===
-        # GOAL: Create a read-only, scrollable tkinter.Text widget.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Ace: implement RampForceApp._text_box")
- 
+        container = ttk.Frame(parent)
+        container.pack(fill="both", expand=True)
+
+        text_widget = tk.Text(
+            container,
+            wrap="word",
+            font=font,
+            padx=10,
+            pady=10,
+            relief="flat",
+            borderwidth=0,
+            state="disabled"
+        )
+
+        scrollbar = ttk.Scrollbar(
+            container,
+            orient="vertical",
+            command=text_widget.yview
+        )
+
+        text_widget.configure(yscrollcommand=scrollbar.set)
+
+        text_widget.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        text_widget.tag_configure(
+            "step_heading",
+            foreground="#1d4ed8",
+            font=(font.actual("family"), font.actual("size"), "bold")
+        )
+        return text_widget
     @staticmethod
     def _set_text(widget, content):
-        # === Ace — RampForceApp._set_text ===
-        # GOAL: Replace text in a read-only Text widget; highlight STEP headings.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Ace: implement RampForceApp._set_text")
- 
+               widget.configure(state="normal")
+        widget.delete("1.0", "end")
+        if content:
+            lines = str(content).splitlines()
+            for index, line in enumerate(lines):
+                if index > 0:
+                    widget.insert("end", "\n")
+
+                if line.strip().upper().startswith("STEP"):
+                    widget.insert("end", line, "step_heading")
+                else:
+                    widget.insert("end", line)
+        widget.configure(state="disabled")
     def _rewrap(self, width):
         target = max(320, width - 380)
         for lbl in getattr(self, "_wrap_labels", []):
@@ -358,17 +392,108 @@ class RampForceApp(tk.Tk):
         target = self.slide_fields if self.vars["mode"].get() == "SLIDING" else self.wheel_fields
         target.pack(fill="x", before=self.planning)
  
-    def _card(self, parent, title):
-        # === Ace — RampForceApp._card ===
-        # GOAL: Create one results card and return its display StringVars.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Ace: implement RampForceApp._card")
+    def _card(self, parent, title): 
+        card = ttk.Frame(parent, padding=10, relief="solid")
+        card.pack(side="left", fill="both", expand=True, padx=5, pady=5)
+
+        ttk.Label(
+            card,
+            text=title,
+            style="CardTitle.TLabel"
+        ).pack(anchor="w")
+
+        value = tk.StringVar(value="—")
+
+        ttk.Label(
+            card,
+            textvariable=value,
+            style="CardValue.TLabel"
+        ).pack(anchor="w", pady=(5, 0))
+
+        return value
+
  
     def _build_overview(self, page):
-        # === Ace — RampForceApp._build_overview ===
-        # GOAL: Build verdict, selection cards, ramp canvas, and custom-run checker.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Ace: implement RampForceApp._build_overview")
+         # Status banner
+        self.banner = tk.Frame(page, padx=12, pady=10)
+        self.banner.pack(fill="x", pady=(0, 10))
+
+        self.banner_icon = ttk.Label(self.banner, font=self.fonts["header"])
+        self.banner_icon.pack(side="left", padx=(0, 10))
+
+        banner_text = ttk.Frame(self.banner)
+        banner_text.pack(side="left", fill="x", expand=True)
+
+        self.banner_title = ttk.Label(
+            banner_text, font=self.fonts["bold"]
+        )
+        self.banner_title.pack(anchor="w")
+
+        self.banner_message = ttk.Label(
+            banner_text, wraplength=700, justify="left"
+        )
+        self.banner_message.pack(anchor="w")
+
+        # Result cards
+        cards = ttk.Frame(page)
+        cards.pack(fill="x", pady=5)
+
+        self.card_vars = {
+            "least_force": self._card(cards, "Least force"),
+            "least_work": self._card(cards, "Least work"),
+            "recommended_run": self._card(cards, "Recommended run"),
+        }
+
+        # Ramp drawing area
+        ramp_frame = ttk.LabelFrame(page, text="Ramp illustration", padding=8)
+        ramp_frame.pack(fill="both", expand=True, pady=8)
+
+        self.ramp_canvas = tk.Canvas(
+            ramp_frame,
+            height=220,
+            background="white",
+            highlightthickness=1,
+            highlightbackground="#d1d5db"
+        )
+        self.ramp_canvas.pack(fill="both", expand=True)
+
+        # Custom run checker
+        custom_frame = ttk.LabelFrame(
+            page, text="Check a custom ramp run", padding=10
+        )
+        custom_frame.pack(fill="x", pady=5)
+
+        ttk.Label(
+            custom_frame,
+            text="Enter a run in metres or a slope such as 1:12:"
+        ).pack(anchor="w")
+
+        custom_entry = ttk.Entry(
+            custom_frame, textvariable=self.vars["custom"]
+        )
+        custom_entry.pack(fill="x", pady=5)
+        custom_entry.bind("<Return>", self._on_check_return)
+
+        ttk.Button(
+            custom_frame,
+            text="Check this ramp",
+            command=self.check_custom
+        ).pack(anchor="w")
+
+        self.custom_result = tk.StringVar(value="")
+        ttk.Label(
+            custom_frame,
+            textvariable=self.custom_result,
+            wraplength=850,
+            justify="left"
+        ).pack(anchor="w", pady=(8, 0))
+
+        self._show_banner(
+            "warn",
+            "⚠",
+            "Waiting for analysis",
+            "Enter your ramp details to see the results."
+        )
  
     def _on_check_return(self, _event=None):
         self.check_custom()
@@ -413,10 +538,22 @@ class RampForceApp(tk.Tk):
         raise NotImplementedError("Christian: implement RampForceApp._build_references")
  
     def _build_models(self, page):
-        # === Ace — RampForceApp._build_models ===
-        # GOAL: Show the preserved MODEL_TEXT explanation in a scrollable text box.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Ace: implement RampForceApp._build_models")
+        self.models_text = self._text_box(
+            page,
+            self.fonts["body"]
+        )
+
+        self.models_text.pack(
+            fill="both",
+            expand=True,
+            padx=8,
+            pady=8
+        )
+
+        self._set_text(
+            self.models_text,
+            MODEL_TEXT
+        )
  
     # ------------------------------------------------------------------ reading the boxes
     def _read_values(self):
@@ -460,10 +597,19 @@ class RampForceApp(tk.Tk):
  
     @staticmethod
     def _fill(vars_, texts):
-        # === Ace — RampForceApp._fill ===
-        # GOAL: Set display StringVars from the provided texts.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Ace: implement RampForceApp._fill")
+                if isinstance(vars_, tk.Variable):
+            vars_.set("" if texts is None else str(texts))
+
+        elif isinstance(vars_, dict):
+            if isinstance(texts, dict):
+                for key, variable in vars_.items():
+                    if key in texts:
+                        RampForceApp._fill(variable, texts[key])
+
+        elif isinstance(vars_, (list, tuple)):
+            if isinstance(texts, (list, tuple)):
+                for variable, text in zip(vars_, texts):
+                    RampForceApp._fill(variable, text)
  
     def _clear_results(self):
         self.analysis, self.rows = None, []
@@ -480,22 +626,62 @@ class RampForceApp(tk.Tk):
                 for value in obj:
                     blank(value)
 
-        blank(getattr(self, "card_vars", None))          # Ace: result-card StringVars
-        blank(getattr(self, "custom_result", None))      # custom-run checker text
-        canvas = getattr(self, "ramp_canvas", None)      # Ace: ramp drawing
+        blank(getattr(self, "card_vars", None))          
+        blank(getattr(self, "custom_result", None))      
+        canvas = getattr(self, "ramp_canvas", None)      
         if canvas is not None:
             canvas.delete("all")
-        steps = getattr(self, "steps_text", None)        # Ace: "How it was calculated" text
+        steps = getattr(self, "steps_text", None)      
         if steps is not None:
             self._set_text(steps, "")
-        self._update_table(self.table_mode.get())        # empties the table (no analysis)
-        self._update_graphs()                            # shows the "enter valid inputs" message
+        self._update_table(self.table_mode.get())        
+        self._update_graphs()                           
  
     def _show_banner(self, level, icon, title, text):
-        # === Ace — RampForceApp._show_banner ===
-        # GOAL: Style the status banner and set icon, title and explanation text.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Ace: implement RampForceApp._show_banner")
+                background, foreground = LEVEL_COLORS.get(
+            level,
+            LEVEL_COLORS["warn"]
+        )
+
+        self.banner.configure(background=background)
+
+        style = ttk.Style(self)
+
+        style.configure(
+            "BannerIcon.TLabel",
+            background=background,
+            foreground=foreground,
+            font=self.fonts["header"]
+        )
+
+        style.configure(
+            "BannerTitle.TLabel",
+            background=background,
+            foreground=foreground,
+            font=self.fonts["bold"]
+        )
+
+        style.configure(
+            "BannerMessage.TLabel",
+            background=background,
+            foreground=foreground,
+            font=self.fonts["body"]
+        )
+
+        self.banner_icon.configure(
+            text=icon,
+            style="BannerIcon.TLabel"
+        )
+
+        self.banner_title.configure(
+            text=title,
+            style="BannerTitle.TLabel"
+        )
+
+        self.banner_message.configure(
+            text=text,
+            style="BannerMessage.TLabel"
+        )
  
     # ------------------------------------------------------------------ drawings
     def _draw_ramp(self):
