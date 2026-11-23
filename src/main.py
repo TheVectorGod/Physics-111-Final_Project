@@ -122,10 +122,36 @@ class Tooltip:
  
 class RampForceApp(tk.Tk):
     def __init__(self):
-        # === Christian — RampForceApp.__init__ ===
-        # GOAL: Initialize the window, StringVars, state, fonts, style, tabs, bindings, and initial analysis.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Christian: implement RampForceApp.__init__")
+        super().__init__()
+        self.title("RampForce — Inclined-Plane Push & Pull Planner")
+        self.geometry("1220x780")
+        self.minsize(980, 640)
+
+        self.vars = {k: tk.StringVar(value=v) for k, v in DEFAULTS.items()}
+        self.error_vars = {k: tk.StringVar() for k in FIELDS}
+        self.entries = {}
+        self.error_labels = {}
+
+        self.text_size = 10
+        self._after_id = None
+        self.inputs = None
+        self.limits = None
+        self.analysis = None
+        self.rows = []
+        self.ref_rows = []
+        self._wrap_labels = []
+        self.fig = None
+
+        self._fonts()
+        self._style()
+        self._build()
+        self._bind_keys()
+
+        for var in self.vars.values():
+            var.trace_add("write", self._schedule_analysis)
+
+        self.bind("<Configure>", lambda e: self._rewrap(e.width) if e.widget is self else None)
+        self.run_analysis()
  
     # ------------------------------------------------------------------ fonts and style
     def _fonts(self):
@@ -313,10 +339,38 @@ class RampForceApp(tk.Tk):
  
     # ------------------------------------------------------------------ layout
     def _build(self):
-        # === Christian — RampForceApp._build ===
-        # GOAL: Construct main header, side inputs and original five notebook tabs.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Christian: implement RampForceApp._build")
+        top = ttk.Frame(self, padding=(12, 8))
+        top.pack(fill="x")
+        ttk.Label(top, text="RampForce", style="Title.TLabel").pack(side="left")
+        ttk.Label(top, text="  Inclined-plane push/pull calculator (theoretical model only)",
+                  style="Hint.TLabel").pack(side="left")
+
+        right = ttk.Frame(top)
+        right.pack(side="right")
+        ttk.Label(right, text="Text size:").pack(side="left", padx=(0, 4))
+        ttk.Button(right, text="A-", width=3, command=lambda: self.change_text_size(-1)).pack(side="left", padx=1)
+        ttk.Button(right, text="A", width=3, command=lambda: self.change_text_size(0)).pack(side="left", padx=1)
+        ttk.Button(right, text="A+", width=3, command=lambda: self.change_text_size(1)).pack(side="left", padx=1)
+        ttk.Button(right, text="Export summary CSV", command=lambda: self.save_csv("summary")).pack(side="left", padx=(10, 0))
+
+        body = ttk.Frame(self, padding=(12, 0, 12, 12))
+        body.pack(fill="both", expand=True)
+        self._build_inputs(body)
+
+        self.notebook = ttk.Notebook(body)
+        self.notebook.pack(side="left", fill="both", expand=True, padx=(10, 0))
+
+        tabs = [
+            ("Overview & verdict", self._build_overview),
+            ("Sweep & graphs", self._build_comparison),
+            ("How it was calculated", self._build_steps),
+            ("Reference QA", self._build_references),
+            ("Models & limits", self._build_models),
+        ]
+        for label, builder in tabs:
+            page = ttk.Frame(self.notebook, padding=10)
+            self.notebook.add(page, text=label)
+            builder(page)
  
     def _build_inputs(self, parent):
         side = ttk.Frame(parent, width=300)
@@ -537,10 +591,33 @@ class RampForceApp(tk.Tk):
     )
  
     def _build_references(self, page):
-        # === Christian — RampForceApp._build_references ===
-        # GOAL: Build reference CSV import/fallback controls, table, and error summary.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Christian: implement RampForceApp._build_references")
+        bar = ttk.Frame(page)
+        bar.pack(fill="x", pady=(0, 8))
+        ttk.Button(bar, text="Load supplied 10 cases", command=self._load_supplied).pack(side="left", padx=(0, 6))
+        ttk.Button(bar, text="Import reference CSV...", command=self.import_refs).pack(side="left", padx=(0, 6))
+        ttk.Button(bar, text="Export comparison CSV...", command=lambda: self.save_csv("refs")).pack(side="left")
+
+        self.ref_summary_var = tk.StringVar(
+            value="Load the supplied 10 reference cases or import a CSV to check implementation accuracy."
+        )
+        summary_lbl = ttk.Label(page, textvariable=self.ref_summary_var, style="Hint.TLabel", wraplength=820, justify="left")
+        summary_lbl.pack(anchor="w", pady=(0, 8))
+        self._wrap_labels.append(summary_lbl)
+
+        cols = (
+            ("Case", 65),
+            ("Mode", 85),
+            ("Ref Steady (N)", 110),
+            ("Calc Steady (N)", 115),
+            ("Steady Err", 95),
+            ("Ref Peak (N)", 105),
+            ("Calc Peak (N)", 110),
+            ("Peak Err", 95),
+            ("Ref Work (J)", 105),
+            ("Calc Work (J)", 110),
+            ("Work Err", 95),
+        )
+        self.ref_table = self._table(page, cols)
  
     def _build_models(self, page):
         self.models_text = self._text_box(
@@ -595,10 +672,64 @@ class RampForceApp(tk.Tk):
  
     # ------------------------------------------------------------------ the one place inputs become results
     def run_analysis(self):
-        # === Christian — RampForceApp.run_analysis ===
-        # GOAL: Coordinate validation, physics.analyze/sweep, text/cards/graph/table and stale-result prevention.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Christian: implement RampForceApp.run_analysis")
+        if self._after_id is not None:
+            self.after_cancel(self._after_id)
+            self._after_id = None
+
+        inputs, limits, errors = self._read_values()
+        self._show_field_errors(errors)
+        if errors or inputs is None or limits is None:
+            self.inputs = None
+            self.limits = None
+            self._clear_results()
+            return
+
+        try:
+            analysis = analyze(inputs, limits)
+            rows = sweep(inputs, limits)
+        except Exception as exc:
+            self.inputs = None
+            self.limits = None
+            self._clear_results()
+            self._show_banner("bad", "\u2716", "Calculation error", str(exc))
+            return
+
+        self.inputs = inputs
+        self.limits = limits
+        self.analysis = analysis
+        self.rows = rows
+
+        icon, title, detail = verdict_text(inputs, limits, analysis)
+        level = "ok" if analysis.feasible else "bad"
+        self._show_banner(level, icon, title, detail)
+
+        c = analysis.at_max
+        card_vars = getattr(self, "card_vars", None)
+        if isinstance(card_vars, dict):
+            if analysis.feasible and analysis.at_min is not None:
+                s = analysis.at_min
+                self._fill(card_vars, {
+                    "least_force": f"{c.steady_n:.1f} N (at {c.run_m:.2f} m)",
+                    "least_work": f"{s.work_j:.0f} J (at {s.run_m:.2f} m)",
+                    "recommended_run": f"{s.run_m:.2f} – {c.run_m:.2f} m",
+                })
+            else:
+                needed = f"{analysis.x_required_m:.2f} m" if analysis.x_required_m is not None else "None"
+                self._fill(card_vars, {
+                    "least_force": f"{c.steady_n:.1f} N (at xmax)",
+                    "least_work": f"{c.work_j:.0f} J (at xmax)",
+                    "recommended_run": f"Needs {needed}",
+                })
+
+        steps = getattr(self, "steps_text", None)
+        if steps is not None:
+            self._set_text(steps, explain_steps(inputs, limits, analysis))
+
+        self._draw_ramp()
+        self._update_graphs()
+        self._update_table(self.table_mode.get())
+        if self.vars["custom"].get().strip():
+            self.check_custom(quiet=True)
  
     @staticmethod
     def _fill(vars_, texts):
@@ -830,16 +961,53 @@ class RampForceApp(tk.Tk):
         )
  
     def save_graph(self):
-        # === Christian — RampForceApp.save_graph ===
-        # GOAL: Save the Matplotlib figure as PNG and display status or file I/O errors.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Christian: implement RampForceApp.save_graph")
+        if self.fig is None:
+            messagebox.showwarning("No graph", "Run a valid analysis before saving the graph.", parent=self)
+            return
+        scen = self.vars["scenario"].get().strip() or "S01"
+        path = self._choose_file(f"{scen}_rampforce_plot.png", kind="png", save=True)
+        if not path:
+            return
+        try:
+            self.fig.savefig(path, dpi=150, bbox_inches="tight")
+            messagebox.showinfo("Graph saved", f"Saved plot image to:\n{path}", parent=self)
+        except OSError as exc:
+            messagebox.showerror("Save failed", f"Could not save graph:\n{exc}", parent=self)
  
     def save_csv(self, kind):
-        # === Christian — RampForceApp.save_csv ===
-        # GOAL: Save candidate, summary or reference-comparison CSV using datasets.py functions.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Christian: implement RampForceApp.save_csv")
+        scen = self.vars["scenario"].get().strip() or "S01"
+        if kind == "refs":
+            if not self.ref_rows:
+                messagebox.showwarning("No reference data", "Load or import reference cases first.", parent=self)
+                return
+            path = self._choose_file(f"{scen}_reference_comparison.csv", kind="csv", save=True)
+            if not path:
+                return
+            try:
+                export_comparison(path, self.ref_rows)
+                messagebox.showinfo("CSV saved", f"Saved reference comparison to:\n{path}", parent=self)
+            except (OSError, ValueError) as exc:
+                messagebox.showerror("Export failed", str(exc), parent=self)
+            return
+
+        inputs, limits, errors = self._read_values()
+        if errors or inputs is None or limits is None:
+            messagebox.showwarning("Invalid inputs", "Fix the highlighted input errors before exporting.", parent=self)
+            return
+
+        default_name = f"{scen}_summary.csv" if kind == "summary" else f"{scen}_candidates.csv"
+        path = self._choose_file(default_name, kind="csv", save=True)
+        if not path:
+            return
+        try:
+            if kind == "summary":
+                export_summary(path, inputs, limits, scen)
+                messagebox.showinfo("CSV saved", f"Saved scenario summary to:\n{path}", parent=self)
+            else:
+                count = export_candidates(path, inputs, limits, scen)
+                messagebox.showinfo("CSV saved", f"Saved {count} candidate rows to:\n{path}", parent=self)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("Export failed", str(exc), parent=self)
  
     def import_refs(self):
         path = self._choose_file("reference_cases.csv", kind="csv", save=False)
@@ -847,16 +1015,24 @@ class RampForceApp(tk.Tk):
             self._load_refs(path)
  
     def _load_supplied(self):
-        # === Christian — RampForceApp._load_supplied ===
-        # GOAL: Load sample CSV from samples/ or use SUPPLIED_REFERENCE_CSV fallback.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Christian: implement RampForceApp._load_supplied")
+        sample_path = BASE / "samples" / "reference_cases.csv"
+        if sample_path.is_file():
+            self._load_refs(sample_path)
+            return
+        try:
+            rows = compare_reference_text(SUPPLIED_REFERENCE_CSV)
+        except ValueError as exc:
+            messagebox.showerror("Reference error", str(exc), parent=self)
+            return
+        self._show_references(rows)
  
     def _load_refs(self, path):
-        # === Christian — RampForceApp._load_refs ===
-        # GOAL: Load/compare external CSV and show friendly errors.
-        # Keep function name/parameters/return contract unchanged.
-        raise NotImplementedError("Christian: implement RampForceApp._load_refs")
+        try:
+            rows = compare_references(path)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("Could not load reference CSV", str(exc), parent=self)
+            return
+        self._show_references(rows)
  
     def _show_references(self, rows):
         self.ref_rows = rows
