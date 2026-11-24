@@ -1,22 +1,94 @@
-"""RampForce desktop interface. Run `python main.py` after `pip install -r requirements.txt`."""
+"""RampForce desktop interface. Run this file directly.
+Keep main.py, physics.py, datasets.py and explain.py together.
+Install Matplotlib once in your Python environment: python -m pip install matplotlib.
+No other project files are required.
+"""
 from __future__ import annotations
 
 from pathlib import Path
 import sys
-import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
-from tkinter import font as tkfont
+import traceback
 
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure
+# Load the matching support modules from the folder containing this main.py,
+# even when an IDE or another tool launches this script from a different folder.
+APP_DIR = Path(__file__).resolve().parent
+if str(APP_DIR) in sys.path:
+    sys.path.remove(str(APP_DIR))
+sys.path.insert(0, str(APP_DIR))
 
-from physics import (Inputs, PlanningLimits, analyze, calculate_at_run, field_errors, parse_run,
-                     reference_slopes, release_note, sweep, what_if_sweep)
-from datasets import (SUPPLIED_REFERENCE_CSV, compare_reference_text, compare_references,
-                      export_candidates, export_comparison, export_summary)
-from explain import explain_steps, verdict_text
+if __name__ == "__main__":
+    print(f"Starting RampForce: {Path(__file__).resolve()}", flush=True)
+    print(f"Python interpreter: {sys.executable}", flush=True)
 
-BASE = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+
+def _report_startup_error(error: Exception) -> None:
+    """Display startup failures even when main.py is opened by double-clicking on Windows."""
+    folder = Path(__file__).resolve().parent
+    log = folder / "RampForce_startup_error.log"
+    details = traceback.format_exc()
+    try:
+        log.write_text(details, encoding="utf-8")
+    except OSError:
+        pass
+
+    if isinstance(error, ModuleNotFoundError) and error.name == "matplotlib":
+        suggestion = ("Matplotlib is missing. Install it in the Python environment running RampForce. "
+                      "In PowerShell, run:\n"
+                      f'& "{sys.executable}" -m pip install matplotlib')
+    elif isinstance(error, ModuleNotFoundError) and error.name in ("tkinter", "_tkinter"):
+        suggestion = ("Tkinter is missing from this Python installation. Install or repair "
+                      "standard Python with Tcl/Tk support.")
+    elif isinstance(error, (ImportError, ModuleNotFoundError)) and (
+        any(name in str(error) for name in ("physics", "datasets", "explain"))
+        or "cannot import name" in str(error)
+    ):
+        suggestion = ("Keep the matching main.py, physics.py, datasets.py, and explain.py "
+                      "together in the same extracted folder. Do not mix older versions.")
+    else:
+        suggestion = ("Check your Python installation and dependencies, then read the "
+                      "startup log for the complete error.")
+
+    message = (f"RampForce could not start.\n\n{type(error).__name__}: {error}\n\n"
+               f"{suggestion}\n\nError log: {log}")
+    print(message, file=sys.stderr)
+    try:
+        # Tkinter is bundled with most standard Python installations on Windows.
+        import tkinter as startup_tk
+        from tkinter import messagebox as startup_messagebox
+        root = startup_tk.Tk()
+        root.withdraw()
+        try:
+            startup_messagebox.showerror("RampForce — startup problem", message, parent=root)
+        finally:
+            root.destroy()
+    except Exception:
+        # If Tcl/Tk itself is unavailable, stderr and the log still give diagnostics.
+        pass
+
+
+try:
+    import tkinter as tk
+    from tkinter import filedialog, messagebox, ttk
+    from tkinter import font as tkfont
+
+    if __name__ == "__main__":
+        print("Tkinter imported; loading Matplotlib...", flush=True)
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+    from matplotlib.figure import Figure
+
+    if __name__ == "__main__":
+        print("Matplotlib imported; loading RampForce modules...", flush=True)
+    from physics import (Inputs, PlanningLimits, analyze, calculate_at_run, field_errors, parse_run,
+                         release_note, graph_samples)
+    from datasets import (SUPPLIED_REFERENCE_CSV, compare_reference_text, compare_references,
+                          export_ramp_comparison, export_comparison, export_summary)
+    from explain import explain_steps, verdict_text
+except Exception as exc:
+    if __name__ == "__main__":
+        _report_startup_error(exc)
+        raise SystemExit(1) from None
+    raise
+
 FIELDS = {
     "load": "Cargo mass (kg)", "carrier": "Sled/cart mass (kg)",
     "height": "Platform height (m)", "max_run": "Available run xmax (m)",
@@ -24,6 +96,7 @@ FIELDS = {
     "radius": "Wheel radius (cm)", "arm": "Rolling arm b (mm)",
     "fmax": "Peak-force limit (N)", "angle": "Angle limit (°)",
     "accel": "Assumed acceleration (m/s²)",
+    "proposed": "Proposed horizontal run (m or 1:N)",
 }
 # Short help shown when the mouse hovers over, or the keyboard focuses, a box.
 TIPS = {
@@ -38,12 +111,13 @@ TIPS = {
     "fmax": "The hardest first push you are willing to make. YOUR planning limit, not a safety standard.",
     "angle": "The steepest ramp you will accept. YOUR planning limit, not a safety standard.",
     "accel": "How quickly you get the load moving. A gentle start is about 0.2 m/s².",
+    "proposed": "Your existing or planned ramp run. Enter metres (2.5) or slope (1:12). A proposed ramp may fail the limits.",
 }
 DEFAULTS = {
     "scenario": "S01", "mode": "SLIDING", "load": "30", "carrier": "5",
     "height": "0.60", "max_run": "3.00", "mu_k": "0.30", "mu_s": "0.40",
     "radius": "10", "arm": "2", "fmax": "222", "angle": "20",
-    "accel": "0.20", "custom": "2.50",
+    "accel": "0.20", "proposed": "2.50",
 }
 # Banner colours. The banner ALWAYS also shows an icon and words, so colour is never the only signal.
 LEVEL_COLORS = {"ok": ("#e6f4ea", "#14532d"), "bad": ("#fdecea", "#7f1d1d"), "warn": ("#fff4d6", "#6b4e00")}
@@ -75,7 +149,8 @@ run gives the least steady force; the shortest gives the least work.
 
 A candidate qualifies only when all three conditions are met:
 x ≤ xmax,  θ ≤ angle limit,  Peak ≤ force limit.
-The 101-point sweep is for comparison, NOT physical measurements.
+Graph points only draw smooth curves, NOT optimization candidates or measurements.
+Directly compare the proposed, least-steady-force, and least-work configurations.
 
 LIMITATIONS:
 The ramp is idealized as straight and rigid; the push is parallel to it;
@@ -113,21 +188,26 @@ class Tooltip:
 
 
 class RampForceApp(tk.Tk):
-    def __init__(self):
+    def __init__(self, defer_analysis=False):
         super().__init__()
+        if __name__ == "__main__":
+            print("Tk root created; building interface...", flush=True)
         self.title("RampForce | Inclined-Plane Analysis")
         # never ask for more than the screen offers (many laptops are only 768 px tall)
-        self.geometry(f"{min(1250, self.winfo_screenwidth() - 40)}x{min(790, self.winfo_screenheight() - 90)}")
-        self.minsize(900, 600)
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        width, height = min(1250, max(320, sw - 40)), min(790, max(240, sh - 90))
+        self.minsize(min(900, width), min(600, height))
+        self.geometry(f"{width}x{height}+{max(0, (sw-width)//2)}+{max(0, (sh-height)//2)}")
         self.vars = {key: tk.StringVar(value=value) for key, value in DEFAULTS.items()}
         self.error_vars = {key: tk.StringVar() for key in FIELDS}
         self.entries, self.error_labels = {}, {}
         self.status = tk.StringVar(value="Ready")
         self.inputs = self.limits = self.analysis = None
-        self.candidates = []
+        self.proposed_run = None
+        self.proposed_result = None
+        self.compare_rows = []
         self.reference_rows = []
-        self.table_choice = "candidates"
-        self.diagram_choice = tk.StringVar(value="Least-force run")
+        self.diagram_choice = tk.StringVar(value="Proposed ramp")
         self.base_size = 11
         self.style = None
         self._after_id = None
@@ -136,7 +216,10 @@ class RampForceApp(tk.Tk):
         self._style()
         self._build()
         self._bind_keys()
-        self.run_analysis()
+        if defer_analysis:
+            self._show_banner("warn", "…", "Loading RampForce", "Preparing the initial analysis.")
+        else:
+            self.run_analysis()
         # live updates start only now, so building the window does not trigger recalculations
         for key in FIELDS:
             self.vars[key].trace_add("write", self._schedule_analysis)
@@ -251,10 +334,14 @@ class RampForceApp(tk.Tk):
             widget.insert("end", line + "\n", "step" if line.startswith("STEP") else ())
         widget.configure(state="disabled")
 
-    def _rewrap(self, width):
-        """Keep long labels inside the window however wide it is (they used to be clipped)."""
+    def _rewrap(self, width, page=None):
+        """Update only this page and only if the wrap width actually changes."""
         for label, margin in self._wrap_labels:
-            label.configure(wraplength=max(width - margin, 200))
+            if page is not None and label is not page and not str(label).startswith(str(page) + "."):
+                continue
+            target = max(width - margin, 200)
+            if str(label.cget("wraplength")) != str(target):
+                label.configure(wraplength=target)
 
     # ------------------------------------------------------------------ layout
     def _build(self):
@@ -276,10 +363,10 @@ class RampForceApp(tk.Tk):
         tabs.pack(side="left", fill="both", expand=True, padx=(12, 0))
         for label, builder in [
             ("Overview", self._build_overview),
-            ("Ramp comparison", self._build_comparison),
-            ("How it was calculated", self._build_steps),
-            ("Reference verification", self._build_references),
-            ("Models & limitations", self._build_models),
+            ("Comparison", self._build_comparison),
+            ("Steps", self._build_steps),
+            ("References", self._build_references),
+            ("Models", self._build_models),
         ]:
             page = ttk.Frame(tabs, padding=12)
             tabs.add(page, text=label)
@@ -334,7 +421,7 @@ class RampForceApp(tk.Tk):
                             textvariable=self.vars["mode"], state="readonly")
         mode.pack(fill="x")
         mode.bind("<<ComboboxSelected>>", self._on_mode_selected)
-        for key in ("load", "carrier", "height", "max_run"):
+        for key in ("load", "carrier", "height", "max_run", "proposed"):
             self._field(fields, key)
         self.slide_fields = ttk.Frame(fields)
         self.wheel_fields = ttk.Frame(fields)
@@ -373,9 +460,39 @@ class RampForceApp(tk.Tk):
         return box, values
 
     def _build_overview(self, page):
+        # A scrollable overview prevents diagram/labels from being clipped on small screens.
+        holder = ttk.Frame(page)
+        holder.pack(fill="both", expand=True)
+        scroller = tk.Canvas(holder, highlightthickness=0)
+        side = ttk.Scrollbar(holder, orient="vertical", command=scroller.yview)
+        scroller.configure(yscrollcommand=side.set)
+        side.pack(side="right", fill="y")
+        scroller.pack(side="left", fill="both", expand=True)
+        inner = ttk.Frame(scroller, padding=(1, 1, 9, 2))
+        slot = scroller.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>", lambda _: scroller.configure(scrollregion=scroller.bbox("all")))
+        scroller.bind("<Configure>", lambda e: scroller.itemconfigure(slot, width=e.width))
+        self.overview_scroller = scroller
+        def scroll_overview(event):
+            if getattr(event, "num", 0) == 4:
+                units = -1
+            elif getattr(event, "num", 0) == 5:
+                units = 1
+            else:
+                units = -1 if event.delta > 0 else 1
+            scroller.yview_scroll(units, "units")
+        def enable_wheel(_):
+            for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                scroller.bind_all(seq, scroll_overview)
+        def disable_wheel(_):
+            for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                scroller.unbind_all(seq)
+        scroller.bind("<Enter>", enable_wheel)
+        scroller.bind("<Leave>", disable_wheel)
+        page = inner
         self.summary, self.explain_text, self.icon_var = tk.StringVar(), tk.StringVar(), tk.StringVar()
-        self.banner = tk.Frame(page, highlightthickness=3, padx=14, pady=10)
-        self.banner.pack(fill="x", pady=(0, 8))
+        self.banner = tk.Frame(page, highlightthickness=2, padx=12, pady=8)
+        self.banner.pack(fill="x", pady=(0, 6))
         self.banner.columnconfigure(1, weight=1)
         self.banner_icon = tk.Label(self.banner, textvariable=self.icon_var, font=self.f_icon, width=2)
         self.banner_title = tk.Label(self.banner, textvariable=self.summary, font=self.f_verdict, anchor="w")
@@ -386,65 +503,95 @@ class RampForceApp(tk.Tk):
         self.banner_text.grid(row=1, column=1, sticky="ew")
 
         cards = ttk.Frame(page)
-        cards.pack(fill="x", pady=(0, 6))
+        cards.pack(fill="x", pady=(0, 5))
         cards.columnconfigure((0, 1), weight=1, uniform="cards")
-        box1, self.card_force = self._card(cards, "Least-force ramp (the longest that qualifies)")
-        box2, self.card_work = self._card(cards, "Least-work ramp (the shortest that qualifies)")
+        box1, self.card_force = self._card(cards, "Least-steady-force feasible ramp")
+        box2, self.card_work = self._card(cards, "Least-modeled-work feasible ramp")
         box1.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
         box2.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
 
+        self.proposed_overview = tk.StringVar()
+        proposed_label = ttk.Label(page, textvariable=self.proposed_overview, justify="left", style="Hint.TLabel")
+        proposed_label.pack(anchor="w", fill="x", pady=(2, 4))
         self.details = tk.StringVar()
         details = ttk.Label(page, textvariable=self.details, justify="left", style="Hint.TLabel")
-        details.pack(anchor="w")
+        details.pack(anchor="w", fill="x")
+
         toolbar = ttk.Frame(page)
-        toolbar.pack(fill="x", pady=(8, 0))
-        ttk.Label(toolbar, text="Diagram:").pack(side="left")
-        choice = ttk.Combobox(toolbar, textvariable=self.diagram_choice, state="readonly",
-                              values=["Least-force run", "Least-work run"], width=22)
-        choice.pack(side="left", padx=7)
-        choice.bind("<<ComboboxSelected>>", lambda _: self._draw_ramp())
-        self.canvas = tk.Canvas(page, bg="white", height=230, highlightthickness=1)
-        self.canvas.pack(fill="both", expand=True, pady=9)
+        toolbar.pack(fill="x", pady=(6, 0))
+        ttk.Label(toolbar, text="Show ramp diagram:").pack(side="left")
+        ttk.Combobox(toolbar, textvariable=self.diagram_choice, state="readonly",
+                     values=["Proposed ramp", "Least-force ramp", "Least-work ramp"], width=22).pack(side="left", padx=7)
+        self.diagram_choice.trace_add("write", lambda *_: self._draw_ramp())
+        self.canvas = tk.Canvas(page, bg="white", height=210, highlightthickness=1,
+                                highlightbackground="#b6c3d1")
+        self.canvas.pack(fill="x", expand=False, pady=(6, 4))
         self.canvas.bind("<Configure>", lambda _: self._draw_ramp())
-        line = ttk.Frame(page)
-        line.pack(fill="x", pady=4)
-        ttk.Label(line, text="Check a ramp (metres, or a slope such as 1:12):").pack(side="left")
-        entry = ttk.Entry(line, textvariable=self.vars["custom"], width=10)
-        entry.pack(side="left", padx=6)
-        entry.bind("<Return>", self._on_check_return)
-        ttk.Button(line, text="Check", command=self.check_custom).pack(side="left")
-        self.custom_result = tk.StringVar(value="")
-        custom = ttk.Label(page, textvariable=self.custom_result, justify="left")
-        custom.pack(anchor="w")
-        self._wrap_labels += [(self.banner_text, 140), (details, 40), (custom, 40)]
-        page.bind("<Configure>", lambda e: self._rewrap(e.width))
+        self.custom_result = tk.StringVar()
+        custom_label = ttk.Label(page, textvariable=self.custom_result, justify="left")
+        custom_label.pack(anchor="w", fill="x", pady=(0, 3))
+        self._wrap_labels += [(self.banner_text, 140), (proposed_label, 40),
+                              (details, 40), (custom_label, 40)]
+        page.bind("<Configure>", lambda e, owner=page: self._rewrap(e.width, owner), add="+")
+
 
     def _on_check_return(self, _event=None):
         self.check_custom()
         return "break"                          # stop Enter from also re-running the whole analysis
 
     def _build_comparison(self, page):
+        # A fixed-height graph and a scrollable comparison prevent the table being
+        # pushed below the visible screen on laptops.
+        holder = ttk.Frame(page)
+        holder.pack(fill="both", expand=True)
+        scroll = tk.Canvas(holder, highlightthickness=0)
+        vbar = ttk.Scrollbar(holder, orient="vertical", command=scroll.yview)
+        scroll.configure(yscrollcommand=vbar.set)
+        vbar.pack(side="right", fill="y")
+        scroll.pack(side="left", fill="both", expand=True)
+        body = ttk.Frame(scroll, padding=(1, 1, 9, 8))
+        window_id = scroll.create_window((0, 0), window=body, anchor="nw")
+        body.bind("<Configure>", lambda _: scroll.configure(scrollregion=scroll.bbox("all")))
+        scroll.bind("<Configure>", lambda e: scroll.itemconfigure(window_id, width=e.width))
+        self.comparison_scroller = scroll
+        def wheel_scroll(event):
+            step = (-1 if event.delta > 0 else 1) if not getattr(event, "num", 0) else (-1 if event.num == 4 else 1)
+            scroll.yview_scroll(step, "units")
+        def wheel_in(_):
+            for name in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                scroll.bind_all(name, wheel_scroll)
+        def wheel_out(_):
+            for name in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                scroll.unbind_all(name)
+        scroll.bind("<Enter>", wheel_in)
+        scroll.bind("<Leave>", wheel_out)
+        page = body
         bar = ttk.Frame(page)
-        bar.pack(fill="x")
-        for label, handler in [
-            ("101 runs", lambda: self._update_table("candidates")),
-            ("Standard slopes", lambda: self._update_table("ratios")),
-            ("Save graph", self.save_graph),
-            ("Export runs CSV", lambda: self.save_csv("runs")),
-            ("Export summary CSV", lambda: self.save_csv("summary")),
-        ]:
-            ttk.Button(bar, text=label, command=handler).pack(side="left", padx=(0, 5))
+        bar.pack(fill="x", pady=(0, 3))
+        ttk.Label(bar, text="Direct comparison: proposed / least force / least work").pack(side="left")
+        ttk.Button(bar, text="Save graph", command=self.save_graph).pack(side="right", padx=(5, 0))
+        ttk.Button(bar, text="Export comparison CSV", command=lambda: self.save_csv("ramp_comparison")).pack(side="right")
         self.figure = Figure(figsize=(7, 4), dpi=90)
         self.chart = FigureCanvasTkAgg(self.figure, master=page)
-        self.chart.get_tk_widget().pack(fill="both", expand=True)
+        self.chart.get_tk_widget().configure(height=330)
+        self.chart.get_tk_widget().pack(fill="x", expand=False)
         self.plot_force = self.figure.add_subplot(211)
         self.plot_work = self.figure.add_subplot(212, sharex=self.plot_force)
+        self.comparison_summary = tk.StringVar(value="Enter valid parameters to compare ramps.")
+        compare_label = ttk.Label(page, textvariable=self.comparison_summary,
+                                  justify="left", wraplength=680, style="Hint.TLabel")
+        compare_label.pack(fill="x", pady=(4, 3))
+        self._wrap_labels.append((compare_label, 40))
         self.table_label = tk.StringVar()
-        ttk.Label(page, textvariable=self.table_label).pack(anchor="w")
-        cols = [("run", "Run (m)", 85), ("angle", "Angle (°)", 90),
-                ("steady", "Steady (N)", 100), ("peak", "Peak (N)", 95),
-                ("work", "Work (J)", 105), ("status", "Constraint status", 230)]
+        ttk.Label(page, textvariable=self.table_label, style="Hint.TLabel").pack(anchor="w")
+        cols = [("role", "Configuration", 155), ("run", "Run (m)", 88),
+                ("angle", "Angle (°)", 90), ("length", "Length (m)", 98),
+                ("steady", "Steady (N)", 108), ("peak", "Peak (N)", 108),
+                ("work", "Work (J)", 104), ("status", "Constraint status", 200)]
         self.ramp_table = self._table(page, cols)
+        self.ramp_table.configure(height=3)
+        page.bind("<Configure>", lambda e, owner=page: self._rewrap(e.width, owner), add="+")
+
 
     def _build_steps(self, page):
         ttk.Label(page, text="Every step of the calculation, using your own numbers.",
@@ -475,7 +622,7 @@ class RampForceApp(tk.Tk):
                          "It does not establish real-world force accuracy or safety.")
         note.pack(anchor="w", pady=7)
         self._wrap_labels += [(intro, 40), (ref_label, 40), (note, 40)]
-        page.bind("<Configure>", lambda e: self._rewrap(e.width), add="+")
+        page.bind("<Configure>", lambda e, owner=page: self._rewrap(e.width, owner), add="+")
 
     def _build_models(self, page):
         text = self._text_box(page, self.f_fixed)
@@ -483,7 +630,7 @@ class RampForceApp(tk.Tk):
 
     # ------------------------------------------------------------------ reading the boxes
     def _read_values(self):
-        """Parse the boxes.  Returns (inputs, limits, errors); errors is {field_key: message}."""
+        """Parse all parameters, including the proposed run. Returns inputs, limits, errors."""
         mode = self.vars["mode"].get()
         keys = ["load", "carrier", "height", "max_run", "fmax", "angle", "accel"]
         keys += ["mu_k", "mu_s"] if mode == "SLIDING" else ["radius", "arm"]
@@ -494,13 +641,21 @@ class RampForceApp(tk.Tk):
             except ValueError:
                 errors[key] = "Enter a number."
         if errors:
+            self.proposed_run = None
             return None, None, errors
         extra = ({"mu_k": values["mu_k"], "mu_s": values["mu_s"]} if mode == "SLIDING"
                  else {"wheel_radius_cm": values["radius"], "roll_arm_mm": values["arm"]})
-        p = Inputs(mode=mode, load_kg=values["load"], carrier_kg=values["carrier"],
-                   height_m=values["height"], max_run_m=values["max_run"], **extra)
+        inputs = Inputs(mode=mode, load_kg=values["load"], carrier_kg=values["carrier"],
+                        height_m=values["height"], max_run_m=values["max_run"], **extra)
         limits = PlanningLimits(values["fmax"], values["angle"], values["accel"])
-        return p, limits, field_errors(p, limits)
+        errors.update(field_errors(inputs, limits))
+        try:
+            self.proposed_run = parse_run(self.vars["proposed"].get(), inputs.height_m)
+        except ValueError as exc:
+            errors["proposed"] = str(exc)
+            self.proposed_run = None
+        return inputs, limits, errors
+
 
     def _schedule_analysis(self, *_):
         """Wait 300 ms after the last keystroke, then recalculate (keeps typing smooth)."""
@@ -516,40 +671,57 @@ class RampForceApp(tk.Tk):
 
     # ------------------------------------------------------------------ the one place inputs become results
     def run_analysis(self):
-        self._after_id = None
+        if self._after_id is not None:
+            self.after_cancel(self._after_id)
+            self._after_id = None
         inputs, limits, errors = self._read_values()
         self._show_field_errors(errors)
-        if errors:
+        if errors or inputs is None or limits is None or self.proposed_run is None:
             self._clear_results()
             return
-        self.inputs, self.limits = inputs, limits
-        self.analysis = a = analyze(inputs, limits)
-        self.candidates = sweep(inputs, limits)
+        try:
+            a = analyze(inputs, limits)
+            proposed = calculate_at_run(inputs, limits, self.proposed_run)
+        except (ValueError, ArithmeticError) as exc:
+            self._clear_results()
+            self._show_banner("bad", "✖", "Calculation error", str(exc))
+            return
+
+        self.inputs, self.limits, self.analysis = inputs, limits, a
+        self.proposed_result = proposed
+        self.compare_rows = [("Proposed ramp", proposed)]
+        if a.feasible:
+            self.compare_rows.extend([("Least-force ramp", a.at_max),
+                                      ("Least-work ramp", a.at_min)])
         icon, title, text = verdict_text(inputs, limits, a)
         self._show_banner("ok" if a.feasible else "bad", icon, title, text)
 
         def values(r):
-            return [f"{r.run_m:.3f} m", f"{r.angle_deg:.2f}°", f"{r.steady_n:.1f} N",
-                    f"{r.peak_n:.1f} N (limit {limits.max_peak_n:g} N)", f"{r.work_j:.0f} J"]
+            return [f"{r.run_m:.3f} m", f"{r.angle_deg:.2f}°", f"{r.steady_n:.2f} N",
+                    f"{r.peak_n:.2f} N", f"{r.work_j:.2f} J"]
         if a.feasible:
             self._fill(self.card_force, values(a.at_max))
             self._fill(self.card_work, values(a.at_min))
         else:
-            self._fill(self.card_force, ["no qualifying ramp"] + ["-"] * 4)
-            self._fill(self.card_work, ["no qualifying ramp"] + ["-"] * 4)
-        c = a.at_max
-        self.details.set(f"At your full floor space ({c.run_m:.2f} m)"
-                         f"{'' if a.feasible else ' - reference only, this ramp does not qualify'}: "
-                         f"ramp length {c.length_m:.2f} m, work {c.work_j:.0f} J, "
-                         f"payload work ratio {c.efficiency * 100:.0f}%.\n{release_note(inputs, c)}")
-        if self.custom_result.get():
-            self.check_custom(quiet=True)
+            self._fill(self.card_force, ["Not available"] + ["—"] * 4)
+            self._fill(self.card_work, ["Not available"] + ["—"] * 4)
+
+        self.proposed_overview.set(
+            f"Proposed ramp — x={proposed.run_m:.3f} m, θ={proposed.angle_deg:.2f}°, "
+            f"steady={proposed.steady_n:.2f} N, peak={proposed.peak_n:.2f} N, "
+            f"work={proposed.work_j:.2f} J — {proposed.status}.")
+        self.details.set(f"Available ground space: {inputs.max_run_m:.2f} m. "
+                         + (f"Feasible run interval: {a.x_required_m:.3f}–{inputs.max_run_m:.3f} m. "
+                            if a.feasible else "No qualifying run within this space. ")
+                         + release_note(inputs, proposed))
+        self.check_custom(quiet=True)
+        self._update_comparison_summary()
         self._draw_ramp()
         self._update_graphs()
-        self._update_table(self.table_choice)
-        self._set_text(self.steps_text, explain_steps(inputs, limits, a))
-        self.status.set(f"{self.vars['scenario'].get() or 'Scenario'}: "
-                        f"{len(self.candidates)} theoretical candidates; no physical forces measured.")
+        self._update_table()
+        self._set_text(self.steps_text, explain_steps(inputs, limits, a, self.proposed_run))
+        self.status.set(f"{self.vars['scenario'].get() or 'Scenario'}: direct ramp comparison (model estimates, not measurements).")
+
 
     @staticmethod
     def _fill(vars_, texts):
@@ -557,20 +729,24 @@ class RampForceApp(tk.Tk):
             var.set(text)
 
     def _clear_results(self):
-        """Invalid inputs: remove the old answer so nothing stale can be read, exported or checked."""
+        """On invalid inputs, clear ALL stale results and disable valid-only exporting."""
         self.inputs = self.limits = self.analysis = None
-        self.candidates = []
+        self.proposed_result = None
+        self.compare_rows = []
         self._show_banner("warn", "!", "Check your inputs",
-                          "Fix the boxes marked with ⚠ on the left to see the answer.")
-        self._fill(self.card_force, ["-"] * 5)
-        self._fill(self.card_work, ["-"] * 5)
+                          "Correct the highlighted fields before analyzing or exporting.")
+        self._fill(self.card_force, ["—"] * 5)
+        self._fill(self.card_work, ["—"] * 5)
+        self.proposed_overview.set("")
         self.details.set("")
         self.custom_result.set("")
+        self.comparison_summary.set("Correct the input values to see a comparison.")
         self._draw_ramp()
         self._update_graphs()
-        self._update_table(self.table_choice)
-        self._set_text(self.steps_text, "Fix the inputs marked with a warning sign to see the step-by-step calculation.")
-        self.status.set("Inputs need attention: results cleared.")
+        self._update_table()
+        self._set_text(self.steps_text, "Fix the highlighted inputs to display calculations.")
+        self.status.set("Invalid inputs: previous results cleared.")
+
 
     def _show_banner(self, level, icon, title, text):
         bg, fg = LEVEL_COLORS[level]
@@ -583,113 +759,163 @@ class RampForceApp(tk.Tk):
 
     # ------------------------------------------------------------------ drawings
     def _draw_ramp(self):
-        cv = self.canvas
-        cv.delete("all")
-        if self.analysis is None:
+        """Draw dimensioned, scale-correct ramp geometry with all labels inside canvas."""
+        cv = getattr(self, "canvas", None)
+        if cv is None:
             return
-        width, height = max(cv.winfo_width(), 400), max(cv.winfo_height(), 220)
-        p, a = self.inputs, self.analysis
-        result = (a.at_min if self.diagram_choice.get() == "Least-work run" and a.at_min else a.at_max)
-        right, ground = width - 85, height - 65
-        left = 35
-        full = right - left
-        start = right - full * result.run_m / p.max_run_m
-        rise = min(140, max(32, full * p.height_m / p.max_run_m))
-        cv.create_line(15, ground, width - 12, ground, fill="#637187", width=2)
-        cv.create_polygon(start, ground, right, ground - rise, right, ground, fill="#d8f0ed")
-        cv.create_line(start, ground, right, ground - rise, fill="#185adb", width=4)
-        cv.create_line(right, ground - rise, right, ground, fill="#087f8c", width=3)
-        cv.create_text(right + 12, ground - rise / 2, text=f"h={p.height_m:g} m", anchor="w", font=self.f_default)
-        # label sits ABOVE the ramp's highest point so it never overlaps the line
-        cv.create_text((start + right) / 2, ground - rise - 16, font=self.f_default,
-                       text=f"L={result.length_m:.2f} m  ·  θ={result.angle_deg:.1f}°")
-        cv.create_line(start, ground + 16, right, ground + 16, fill="#cc7722", arrow="both", width=2)
-        cv.create_text((start + right) / 2, ground + 6, text=f"x={result.run_m:.2f} m", fill="#a66418", font=self.f_default)
-        cv.create_line(left, ground + 40, right, ground + 40, fill="#0a765d", arrow="both", width=2)
-        cv.create_text((left + right) / 2, ground + 54, text=f"xmax={p.max_run_m:.2f} m", fill="#0a765d", font=self.f_default)
-        if not a.feasible:
-            cv.create_text(15, 14, anchor="w", fill="#9b1c1c", font=self.f_bold,
-                           text="✖ NOT FEASIBLE - sketch shows your full floor space for reference only")
+        cv.delete("all")
+        if self.analysis is None or self.proposed_result is None:
+            return
+        w, ht = max(cv.winfo_width(), 400), max(cv.winfo_height(), 175)
+        a, p = self.analysis, self.inputs
+        choice = self.diagram_choice.get()
+        if choice == "Least-force ramp" and a.feasible:
+            r, subtitle = a.at_max, "Least-force feasible ramp"
+        elif choice == "Least-work ramp" and a.feasible:
+            r, subtitle = a.at_min, "Least-work feasible ramp"
+        else:
+            r, subtitle = self.proposed_result, "Proposed ramp"
+        if choice != "Proposed ramp" and not a.feasible:
+            subtitle += " unavailable; showing proposed ramp"
+
+        x0, floor = 75, ht - 66
+        scale = min((w - 195) / max(r.run_m, p.max_run_m), (ht - 135) / p.height_m)
+        scale = max(scale, .01)
+        x1, xmax1 = x0 + r.run_m * scale, x0 + p.max_run_m * scale
+        y1 = floor - p.height_m * scale
+        status_color = "#16734c" if r.feasible else "#ad3030"
+        cv.create_text(12, 8, anchor="nw", font=self.f_bold,
+                       text=f"{subtitle}  |  {'FEASIBLE' if r.feasible else 'NOT FEASIBLE'}",
+                       fill=status_color)
+        cv.create_text(12, 30, anchor="nw", font=self.f_default,
+                       text=f"L={r.length_m:.2f} m    θ={r.angle_deg:.1f}°    x={r.run_m:.2f} m",
+                       fill="#26384b")
+        cv.create_line(45, floor, min(w - 10, max(x1, xmax1) + 22), floor,
+                       fill="#627184", width=2)
+        cv.create_polygon(x0, floor, x1, floor, x1, y1,
+                          fill="#def4ed" if r.feasible else "#fbe6e6", outline="")
+        cv.create_line(x0, floor, x1, y1, fill="#135b95", width=3)
+        cv.create_line(x1, y1, x1, floor, fill="#287874", width=2)
+        cv.create_text(min(x1 + 7, w - 55), (floor + y1) / 2, text=f"h={p.height_m:g} m",
+                       anchor="w", font=self.f_default, fill="#204a47")
+        # Both dimension labels remain within the canvas, including narrow laptop windows.
+        cv.create_line(x0, floor + 12, x1, floor + 12, arrow="both", fill="#b3651c")
+        cv.create_text((x0 + x1) / 2, floor + 24, text=f"x = {r.run_m:.2f} m",
+                       font=self.f_default, fill="#925118")
+        cv.create_line(x0, floor + 37, xmax1, floor + 37, arrow="both", fill="#0e7363")
+        cv.create_text((x0 + xmax1) / 2, floor + 50, text=f"xmax = {p.max_run_m:.2f} m",
+                       font=self.f_default, fill="#0e7363")
+
 
     def check_custom(self, quiet=False):
-        """'Check a ramp': a run in metres or a slope such as 1:12, tested against all three limits."""
-        if self.inputs is None:
+        """The proposed-run input is evaluated automatically with the full analysis."""
+        if self.proposed_result is None or self.inputs is None:
             if not quiet:
-                messagebox.showwarning("Check your inputs", "Please fix the boxes marked with ⚠ first.", parent=self)
-            return
-        try:
-            run = parse_run(self.vars["custom"].get(), self.inputs.height_m)
-            r = calculate_at_run(self.inputs, self.limits, run)
-        except ValueError as error:
-            self.custom_result.set(f"⚠ {error}")
-            return
-        mark = "✔ FEASIBLE" if r.feasible else "✖ NOT FEASIBLE"
-        self.custom_result.set(f"{mark}: {r.plain_status}\n"
-                               f"Run {run:.2f} m, angle {r.angle_deg:.1f}°, steady {r.steady_n:.0f} N, "
-                               f"peak {r.peak_n:.0f} N (limit {self.limits.max_peak_n:g} N), work {r.work_j:.0f} J")
+                self.custom_result.set("Correct the highlighted inputs first.")
+            return None
+        r = self.proposed_result
+        self.custom_result.set(
+            f"Proposed ramp constraints — Space: {'PASS' if r.space_ok else 'FAIL'}, "
+            f"Angle: {'PASS' if r.angle_ok else 'FAIL'}, "
+            f"Peak force: {'PASS' if r.force_ok else 'FAIL'}. "
+            f"{'All limits satisfied.' if r.feasible else r.plain_status}")
+        return r
+
 
     def _update_graphs(self):
         top, bottom = self.plot_force, self.plot_work
         top.clear()
         bottom.clear()
-        for old_legend in list(self.figure.legends):      # figure-level legend from the previous drawing
-            old_legend.remove()
-        fs = max(8, self.base_size - 2)
-        if self.inputs is None:
-            top.text(.5, .5, "Fix the inputs marked with a warning sign to see the graph.",
-                     ha="center", va="center", transform=top.transAxes, fontsize=fs)
+        for item in list(self.figure.legends):
+            item.remove()
+        fontsize = max(8, self.base_size - 2)
+        if self.inputs is None or self.proposed_result is None:
+            top.text(.5, .5, "Enter valid inputs to display the graphs.",
+                     ha="center", va="center", transform=top.transAxes, fontsize=fontsize)
             self.chart.draw_idle()
             return
         p, lim, a = self.inputs, self.limits, self.analysis
-        # When the angle limit cannot fit in the floor space there are no qualifying runs; the graph
-        # then shows what-if curves out to the run that WOULD be needed, so the reason is visible.
-        what_if = not self.candidates
-        rows = self.candidates or what_if_sweep(p, lim)
-        x = [r.run_m for r in rows]
-        top.plot(x, [r.steady_n for r in rows], color="#1f5fa8", ls="-", lw=2.2, label="Steady force (keep moving)")
-        top.plot(x, [r.peak_n for r in rows], color="#c2410c", ls="--", lw=2.2, label="Peak force (get started)")
-        top.axhline(lim.max_peak_n, color="#7f1d1d", ls=":", lw=2, label=f"Your peak limit ({lim.max_peak_n:g} N)")
-        bottom.plot(x, [r.work_j for r in rows], color="#1f5fa8", lw=2.2, label="Mechanical work")
+        # These points DRAW continuous curves. They are never ranked or exported as configurations.
+        plot_points = graph_samples(p, lim, self.proposed_run)
+        xs = [r.run_m for r in plot_points]
+        top.plot(xs, [r.steady_n for r in plot_points], color="#225b94", lw=2,
+                 label="Steady force")
+        top.plot(xs, [r.peak_n for r in plot_points], color="#bb5426", lw=2,
+                 ls="--", label="Estimated peak force")
+        top.axhline(lim.max_peak_n, color="#7d3131", ls=":", lw=1.4,
+                    label="Peak-force planning limit")
+        bottom.plot(xs, [r.work_j for r in plot_points], color="#225b94", lw=2,
+                    label="Modeled work")
         for ax in (top, bottom):
-            ax.axvline(p.max_run_m, color="#444444", ls="-.", lw=1.2, label="Your floor space" if ax is top else None)
+            ax.axvline(p.max_run_m, color="#5a626b", ls="-.", lw=1.2,
+                       label="Available run" if ax is top else None)
             if a.feasible:
-                ax.axvspan(a.x_required_m, p.max_run_m, color="#c9f1df", alpha=0.5,
-                           label="Qualifying runs" if ax is top else None)
-            elif what_if:
-                needed = a.x_required_m or a.x_angle_m
-                ax.axvline(needed, color="#7f1d1d", ls=":", lw=1.4,
-                           label="Run that would be needed" if ax is top else None)
-        if what_if:
-            top.set_title("No run satisfies the angle limit within your floor space - curves shown to explain why",
-                          fontsize=fs)
-        # legend BELOW the plots so it never covers the curves
-        handles, labels = top.get_legend_handles_labels()
-        self.figure.legend(handles, labels, loc="lower center", ncol=3, fontsize=fs, frameon=False)
-        top.set_ylabel("Force (N)", fontsize=fs)
-        bottom.set_ylabel("Work (J)", fontsize=fs)
-        bottom.set_xlabel("Horizontal run x (m)", fontsize=fs)
+                ax.axvspan(a.x_required_m, p.max_run_m, color="#c5e9d8", alpha=.5,
+                           label="Feasible interval" if ax is top else None)
+            elif a.x_required_m is not None and a.x_required_m <= 200:
+                ax.axvline(a.x_required_m, color="#9e2b2b", ls=":", lw=1.1,
+                           label="Required run beyond available space" if ax is top else None)
+        for name, r, color, ls in [
+            ("Proposed", self.proposed_result, "#5e3aa6", "-"),
+            ("Least force", a.at_max if a.feasible else None, "#237a46", "--"),
+            ("Least work", a.at_min if a.feasible else None, "#c47720", ":")]:
+            if r is None:
+                continue
+            top.axvline(r.run_m, color=color, ls=ls, lw=1.3, label=name)
+            bottom.axvline(r.run_m, color=color, ls=ls, lw=1.1)
+        if not a.feasible:
+            top.set_title("No feasible ramp under these planning limits", fontsize=fontsize)
+        top.set_ylabel("Force (N)", fontsize=fontsize)
+        bottom.set_ylabel("Work (J)", fontsize=fontsize)
+        bottom.set_xlabel("Horizontal run x (m)", fontsize=fontsize)
         for ax in (top, bottom):
-            ax.grid(alpha=.25)
-            ax.tick_params(labelsize=fs)
-        self.figure.tight_layout(rect=(0, 0.14, 1, 1))
+            ax.grid(alpha=.22)
+            ax.tick_params(labelsize=fontsize)
+        handles, labels = top.get_legend_handles_labels()
+        self.figure.legend(handles, labels, loc="lower center", ncol=3,
+                           fontsize=max(7, fontsize-1), frameon=False)
+        self.figure.tight_layout(rect=(0, .12, 1, 1))
         self.chart.draw_idle()
 
-    def _update_table(self, which):
-        self.table_choice = which
+
+    def _update_table(self):
         self.ramp_table.delete(*self.ramp_table.get_children())
         if self.inputs is None:
-            self.table_label.set("Fix the inputs marked with a warning sign to see the table.")
+            self.table_label.set("No valid ramp input: previous comparison cleared.")
             return
-        rows = ([("", item) for item in self.candidates] if which == "candidates"
-                else reference_slopes(self.inputs, self.limits))
-        if which == "candidates" and not rows:
-            self.table_label.set("No run satisfies the angle limit within your floor space, so there is nothing to list.")
+        self.table_label.set(f"{len(self.compare_rows)} directly calculated configurations; "
+                             "only feasible alternatives are recommended.")
+        for role, r in self.compare_rows:
+            self.ramp_table.insert("", "end", values=(
+                role, f"{r.run_m:.3f}", f"{r.angle_deg:.2f}",
+                f"{r.length_m:.3f}", f"{r.steady_n:.3f}", f"{r.peak_n:.3f}",
+                f"{r.work_j:.3f}", r.status))
+
+
+    def _update_comparison_summary(self):
+        if self.proposed_result is None or self.analysis is None:
+            self.comparison_summary.set("Enter valid inputs to compare ramps.")
             return
-        self.table_label.set(f"{len(rows)} theoretical configurations; 'Feasible' means all three of your limits pass.")
-        for ratio, r in rows:
-            run_label = f"{r.run_m:.3f}" + (f" ({ratio})" if ratio else "")
-            self.ramp_table.insert("", "end", values=(run_label, f"{r.angle_deg:.2f}",
-                f"{r.steady_n:.3f}", f"{r.peak_n:.3f}", f"{r.work_j:.2f}", r.plain_status))
+        proposed, a = self.proposed_result, self.analysis
+        if not a.feasible:
+            self.comparison_summary.set(
+                "Proposed ramp: " + proposed.status + ". "
+                "No feasible alternatives satisfy the chosen angle, force, and space limits. "
+                "A force/work improvement cannot be recommended for this scenario.")
+            return
+        best_f, best_w = a.at_max, a.at_min
+        force_saved = proposed.steady_n - best_f.steady_n
+        pct = 100 * force_saved / proposed.steady_n if proposed.steady_n > 0 else 0.0
+        work_saved = proposed.work_j - best_w.work_j
+        proposed_note = "feasible" if proposed.feasible else "NOT feasible under the selected limits"
+        self.comparison_summary.set(
+            f"Proposed ramp ({proposed_note}) vs. least-force ramp: "
+            f"Δsteady force = {force_saved:+.2f} N ({pct:+.2f}% reduction relative to proposed); "
+            f"Δwork (alternative − proposed) = {best_f.work_j - proposed.work_j:+.2f} J. "
+            f"Least-work alternative: x={best_w.run_m:.3f} m; "
+            f"work saved vs. proposed = {work_saved:+.2f} J. "
+            "A negative saving means the alternative increases that quantity. "
+            "All results are theoretical; an infeasible proposed ramp is only a comparison baseline.")
 
     # ------------------------------------------------------------------ files
     def _choose_file(self, filename, kind="csv", save=True):
@@ -700,41 +926,53 @@ class RampForceApp(tk.Tk):
         return filedialog.askopenfilename(**args)
 
     def save_graph(self):
+        # Revalidate the CURRENT text immediately; a pending live-update timer may
+        # not have fired yet after the user typed an invalid value.
+        self.run_analysis()
+        if self.inputs is None or self.analysis is None or self.proposed_result is None:
+            messagebox.showwarning("Check your inputs",
+                                   "Correct invalid inputs before exporting a graph.", parent=self)
+            return
         path = self._choose_file("RampForce_graph.png", kind="png")
         if path:
             try:
                 self.figure.savefig(path, dpi=180)
-                self.status.set(f"Saved: {path}")
-            except OSError as error:
-                messagebox.showerror("Save failed", str(error), parent=self)
+                self.status.set(f"Saved graph: {path}")
+            except (OSError, ValueError) as exc:
+                messagebox.showerror("Save failed", str(exc), parent=self)
+
 
     def save_csv(self, kind):
-        if kind == "comparison" and not self.reference_rows:
-            messagebox.showwarning("No comparison", "Load a reference CSV first.", parent=self)
+        # Prevent exporting stale calculations even if live-update is still pending.
+        if kind != "comparison":
+            self.run_analysis()
+        if kind == "comparison":
+            if not self.reference_rows:
+                messagebox.showwarning("No reference results", "Import reference CSV cases first.", parent=self)
+                return
+        elif self.inputs is None or self.proposed_result is None:
+            messagebox.showwarning("Check your inputs", "Correct invalid inputs before exporting.", parent=self)
             return
-        if kind != "comparison" and self.inputs is None:
-            messagebox.showwarning("Check your inputs", "Please fix the boxes marked with ⚠ first.", parent=self)
-            return
-        if kind == "runs" and not self.candidates:
-            messagebox.showinfo("Nothing to export", "No run satisfies the angle limit within your floor space, "
-                                "so there are no candidate rows to export.", parent=self)
+        if kind not in ("summary", "ramp_comparison", "comparison"):
+            messagebox.showerror("Unknown export", f"Unsupported export kind: {kind}", parent=self)
             return
         scenario = self.vars["scenario"].get().strip() or "scenario"
         path = self._choose_file(f"RampForce_{scenario}_{kind}.csv")
         if not path:
             return
         try:
-            if kind == "runs":
-                count = export_candidates(path, self.inputs, self.limits, scenario)
-                self.status.set(f"Exported {count} candidate rows to {path}")
+            if kind == "ramp_comparison":
+                n = export_ramp_comparison(path, self.inputs, self.limits, self.proposed_run, scenario)
+                self.status.set(f"Exported {n} direct ramp comparison rows: {path}")
             elif kind == "summary":
-                export_summary(path, self.inputs, self.limits, scenario)
-                self.status.set(f"Saved summary: {path}")
+                export_summary(path, self.inputs, self.limits, scenario, self.proposed_run)
+                self.status.set(f"Saved scenario summary: {path}")
             else:
                 export_comparison(path, self.reference_rows)
-                self.status.set(f"Saved reference comparison: {path}")
-        except (OSError, ValueError) as error:
-            messagebox.showerror("Export failed", str(error), parent=self)
+                self.status.set(f"Saved numerical reference comparison: {path}")
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("Export failed", str(exc), parent=self)
+
 
     def import_refs(self):
         path = self._choose_file("", save=False)
@@ -742,12 +980,8 @@ class RampForceApp(tk.Tk):
             self._load_refs(path)
 
     def _load_supplied(self):
-        """The 10 supplied cases: from samples/ if present, otherwise from the copy built into datasets.py."""
-        path = BASE / "samples" / "reference_cases_v2.csv"
-        if path.exists():
-            self._load_refs(path)
-        else:
-            self._show_references(compare_reference_text(SUPPLIED_REFERENCE_CSV))
+        """Load the ten reference cases embedded in datasets.py; no external CSV needed."""
+        self._show_references(compare_reference_text(SUPPLIED_REFERENCE_CSV))
 
     def _load_refs(self, path):
         try:
@@ -769,16 +1003,56 @@ class RampForceApp(tk.Tk):
                            f"MAE peak: {sum(r['peak_err'] for r in rows)/n:.8f} N  |  "
                            f"MAE work: {sum(r['work_err'] for r in rows)/n:.8f} J")
 
-
-def _enable_sharp_text_on_windows():
-    """Without this, Windows blurs the whole window on high-resolution screens."""
+def main() -> None:
+    """Map the window before the first analysis and report the actual startup stage."""
     try:
-        from ctypes import windll              # only exists on Windows
-        windll.shcore.SetProcessDpiAwareness(1)
-    except (ImportError, AttributeError, OSError):
+        print("Creating RampForce window...", flush=True)
+        app = RampForceApp(defer_analysis=True)
+        app.report_callback_exception = lambda kind, error, tb: _report_callback_error(app, kind, error, tb)
+        app.deiconify()
+        app.lift()
+
+        def initial_analysis():
+            print("RampForce window visible; calculating initial results...", flush=True)
+            app.run_analysis()
+            print("RampForce initial analysis complete. Close the window to exit.", flush=True)
+
+        def first_map(event):
+            if event.widget is not app or getattr(app, "_startup_mapped", False):
+                return
+            app._startup_mapped = True
+            print(f"RampForce window mapped: {app.winfo_geometry()}", flush=True)
+            # Bring the window forward briefly, then restore normal stacking.
+            try:
+                app.attributes("-topmost", True)
+                app.after(600, lambda: app.attributes("-topmost", False))
+            except tk.TclError:
+                pass
+            app.after(150, initial_analysis)
+
+        app.bind("<Map>", first_map, add="+")
+        # Handle an already mapped root as well as the usual Map event.
+        if app.winfo_ismapped():
+            from types import SimpleNamespace
+            app.after(0, lambda: first_map(SimpleNamespace(widget=app)))
+        print("Interface built; entering Tkinter event loop...", flush=True)
+        app.mainloop()
+        print("RampForce closed.", flush=True)
+    except Exception as exc:
+        _report_startup_error(exc)
+        raise SystemExit(1) from None
+
+
+def _report_callback_error(app, kind, error, tb):
+    """Show callback errors in the existing root, without creating another Tk instance."""
+    details = "".join(traceback.format_exception(kind, error, tb))
+    print(details, file=sys.stderr, flush=True)
+    try:
+        (APP_DIR / "RampForce_startup_error.log").write_text(details, encoding="utf-8")
+    except OSError:
         pass
+    messagebox.showerror("RampForce error", f"{kind.__name__}: {error}\nSee the terminal for details.", parent=app)
 
 
 if __name__ == "__main__":
-    _enable_sharp_text_on_windows()
-    RampForceApp().mainloop()
+    main()

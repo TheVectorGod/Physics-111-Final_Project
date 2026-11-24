@@ -5,7 +5,7 @@ No GUI code here, so every sentence can be tested.  Uses only the dataclasses in
 from __future__ import annotations
 
 from physics import (G, Analysis, Inputs, PlanningLimits, force_derivative, reference_slopes,
-                     release_note, work_derivative)
+                     release_note, work_derivative, calculate_at_run)
 
 DEG = "\u00b0"
 
@@ -39,11 +39,20 @@ def verdict_text(i: Inputs, l: PlanningLimits, a: Analysis) -> tuple[str, str, s
 
 
 # --------------------------------------------------------------------------- step-by-step walkthrough
-def explain_steps(i: Inputs, l: PlanningLimits, a: Analysis) -> str:
+def explain_steps(i: Inputs, l: PlanningLimits, a: Analysis, proposed_run_m: float | None = None) -> str:
     """Every calculation step with the user's own numbers (what goes in, formula, result, plain words)."""
     sliding = i.mode == "SLIDING"
     m, c = i.total_mass_kg, a.at_max
     out: list[str] = []
+    if proposed_run_m is not None:
+        proposed = calculate_at_run(i, l, proposed_run_m)
+        out.extend([
+            "STEP 0 - Evaluate your proposed ramp",
+            f"  Horizontal run = {proposed.run_m:.3f} m; ramp length = {proposed.length_m:.3f} m; angle = {proposed.angle_deg:.2f}°",
+            f"  Steady force = {proposed.steady_n:.3f} N; estimated peak = {proposed.peak_n:.3f} N; modeled work = {proposed.work_j:.3f} J",
+            f"  Limits: space {'PASS' if proposed.space_ok else 'FAIL'}, angle {'PASS' if proposed.angle_ok else 'FAIL'}, force {'PASS' if proposed.force_ok else 'FAIL'}.",
+            "  The remaining steps show the model and explain how RampForce derives the feasible endpoint alternatives.", "",
+        ])
 
     def step(title: str, goes_in: str, formula: str, result: str, plain: str) -> None:
         out.extend([title, f"  Goes in : {goes_in}", f"  Formula : {formula}",

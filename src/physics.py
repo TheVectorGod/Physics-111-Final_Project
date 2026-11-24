@@ -9,7 +9,6 @@ from dataclasses import dataclass
 import math
 
 G = 9.81
-GRID_POINTS = 101
 RATIOS = (5, 8, 10, 12, 16, 20)
 EPS = 1e-9
 
@@ -256,20 +255,6 @@ def analyze(inputs: Inputs, limits: PlanningLimits) -> Analysis:
                     math.degrees(allow), limiting, at_max, at_min)
 
 
-def sweep(inputs: Inputs, limits: PlanningLimits, points: int = GRID_POINTS) -> list[RampResult]:
-    """Exactly matches v2's CSV sampling: angle-cap run to xmax.
-
-    Only the ANGLE cap is guaranteed by construction. Some rows fail FORCE.
-    When the angle cap itself does not fit, no candidate rows are returned.
-    """
-    if points < 2:
-        raise ValueError("At least two sample points are required.")
-    result = analyze(inputs, limits)
-    if result.x_angle_m > inputs.max_run_m + EPS:
-        return []
-    low, high = result.x_angle_m, inputs.max_run_m
-    return [calculate_at_run(inputs, limits, low + (high - low) * i / (points - 1))
-            for i in range(points)]
 
 
 def reference_slopes(inputs: Inputs, limits: PlanningLimits) -> list[tuple[str, RampResult]]:
@@ -305,19 +290,6 @@ def parse_run(text: str, height_m: float) -> float:
     return run
 
 
-def what_if_sweep(inputs: Inputs, limits: PlanningLimits, points: int = 60) -> list[RampResult]:
-    """Curves for the graph when `sweep` is empty (the angle cap does not fit in the space).
-
-    Covers your floor space up to the run that WOULD be needed, so the user can see why
-    nothing qualifies.  Diagnostic only; none of these rows are feasible by construction.
-    """
-    a = analyze(inputs, limits)
-    low = max(min(inputs.max_run_m, a.x_angle_m), 0.1)
-    high = min(max(inputs.max_run_m, a.x_angle_m, a.x_required_m or 0.0) * 1.08, 200.0)
-    if high <= low:
-        high = min(low * 1.25, 200.0)
-    return [calculate_at_run(inputs, limits, low + (high - low) * i / (points - 1))
-            for i in range(points)]
 
 
 def release_note(inputs: Inputs, result: RampResult) -> str:
@@ -329,3 +301,25 @@ def release_note(inputs: Inputs, result: RampResult) -> str:
                 f"{result.holding_force_n:.0f} N.")
     return ("A wheeled load can roll back when released: hold or brake the cart. "
             "This app cannot predict holding or braking.")
+
+
+def graph_samples(inputs: Inputs, limits: PlanningLimits, proposed_run_m: float,
+                  points: int = 75) -> list[RampResult]:
+    """Sample the continuous force/work curves for GRAPHING ONLY.
+
+    These plotted points are not optimization candidates or research observations.
+    Recommendations always come directly from `analyze()` and not from sampling.
+    """
+    validate(inputs, limits)
+    if not math.isfinite(proposed_run_m) or not 0 < proposed_run_m <= 200:
+        raise ValueError("Proposed run must be between 0 and 200 m.")
+    if points < 2:
+        raise ValueError("Graphs require two or more plot positions.")
+    a = analyze(inputs, limits)
+    finite_needed = a.x_required_m if a.x_required_m is not None else 0.0
+    span = max(inputs.max_run_m, proposed_run_m, a.x_angle_m, finite_needed)
+    end = min(200.0, max(0.12, span * 1.05))
+    begin = max(0.05, min(inputs.max_run_m, proposed_run_m, a.x_angle_m) * 0.65)
+    begin = min(begin, end * 0.85)
+    return [calculate_at_run(inputs, limits, begin + (end - begin) * k / (points - 1))
+            for k in range(points)]

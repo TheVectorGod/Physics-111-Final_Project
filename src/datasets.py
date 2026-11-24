@@ -1,4 +1,4 @@
-"""CSV export, source v2 reference-case comparison, and summary file creation."""
+"""CSV export for direct ramp comparisons and independent-reference verification."""
 from __future__ import annotations
  
 import csv
@@ -7,7 +7,7 @@ import io
 import math
 from pathlib import Path
  
-from physics import Inputs, PlanningLimits, RampResult, analyze, calculate_at_run, sweep, G
+from physics import Inputs, PlanningLimits, RampResult, analyze, calculate_at_run, G
  
  
 # The 10 supplied reference cases, embedded so the "Load supplied 10 cases" button still works if
@@ -53,23 +53,52 @@ def csv_dict(inputs: Inputs, limits: PlanningLimits, r: RampResult, scenario: st
     ]))
  
  
-def export_candidates(path: str | Path, inputs: Inputs, limits: PlanningLimits, scenario: str = "S01") -> int:
-    rows = sweep(inputs, limits)
-    with open(path, "w", newline="", encoding="utf-8-sig") as file:
-        writer = csv.DictWriter(file, fieldnames=CSV_COLUMNS)
-        writer.writeheader()
-        for r in rows:
-            writer.writerow(csv_dict(inputs, limits, r, scenario))
-    return len(rows)
  
  
-def export_summary(path: str | Path, inputs: Inputs, limits: PlanningLimits, scenario: str = "S01") -> None:
-    """Save a single study record; one row per scenario, not a measurement."""
+
+def export_ramp_comparison(path: str | Path, inputs: Inputs, limits: PlanningLimits,
+                           proposed_run_m: float, scenario: str = "S01") -> int:
+    """Export the proposed ramp and the TWO analytical alternatives (if feasible).
+
+    Each row is a model calculation, not an independent observation. Curve plot
+    samples are never exported. Duplicate runs may be labeled for different roles.
+    """
     a = analyze(inputs, limits)
-    chosen = a.at_max if a.feasible else None
+    proposed = calculate_at_run(inputs, limits, proposed_run_m)
+    configurations = [("PROPOSED", proposed)]
+    if a.feasible:
+        configurations.extend([("LEAST_FORCE", a.at_max), ("LEAST_WORK", a.at_min)])
+    columns = ["configuration", "steady_force_saved_vs_proposed_N",
+               "steady_force_reduction_vs_proposed_pct", "work_saved_vs_proposed_J"] + CSV_COLUMNS
+    with open(path, "w", newline="", encoding="utf-8-sig") as stream:
+        writer = csv.DictWriter(stream, fieldnames=columns)
+        writer.writeheader()
+        for role, result in configurations:
+            saved = proposed.steady_n - result.steady_n
+            pct = 100.0 * saved / proposed.steady_n if proposed.steady_n > 0 else 0.0
+            record = csv_dict(inputs, limits, result, scenario)
+            writer.writerow({
+                "configuration": role,
+                "steady_force_saved_vs_proposed_N": f"{saved:.6f}",
+                "steady_force_reduction_vs_proposed_pct": f"{pct:.6f}",
+                "work_saved_vs_proposed_J": f"{proposed.work_j - result.work_j:.6f}",
+                **record,
+            })
+    return len(configurations)
+
+
+def export_summary(path: str | Path, inputs: Inputs, limits: PlanningLimits,
+                   scenario: str = "S01", proposed_run_m: float | None = None) -> None:
+    """One scenario summary: proposed versus feasible endpoint alternatives."""
+    a = analyze(inputs, limits)
+    proposed = calculate_at_run(inputs, limits, proposed_run_m) if proposed_run_m is not None else None
+    best_force = a.at_max if a.feasible else None
+    best_work = a.at_min if a.feasible else None
+    saved = proposed.steady_n - best_force.steady_n if proposed and best_force else None
+    pct = 100 * saved / proposed.steady_n if saved is not None and proposed.steady_n > 0 else None
     row = {
         "scenario_id": scenario, "recorded_at": datetime.now().isoformat(timespec="seconds"),
-        "model_version": "RampForce Tkinter v1 / source RampForce v2", "mode": inputs.mode,
+        "model_version": "RampForce Tkinter direct-comparison edition", "mode": inputs.mode,
         "load_kg": inputs.load_kg, "carrier_kg": inputs.carrier_kg,
         "height_m": inputs.height_m, "max_run_m": inputs.max_run_m,
         "mu_k": inputs.mu_k if inputs.mode == "SLIDING" else "",
@@ -77,19 +106,37 @@ def export_summary(path: str | Path, inputs: Inputs, limits: PlanningLimits, sce
         "wheel_radius_cm": inputs.wheel_radius_cm if inputs.mode == "WHEELED" else "",
         "roll_arm_mm": inputs.roll_arm_mm if inputs.mode == "WHEELED" else "",
         "max_peak_n": limits.max_peak_n, "max_angle_deg": limits.max_angle_deg,
-        "acceleration_mps2": limits.acceleration_mps2, "feasible": a.feasible,
-        "reason": a.reason, "shortest_feasible_run_m": a.x_required_m if a.feasible else "",
-        "least_force_run_m": chosen.run_m if chosen else "",
-        "least_steady_force_N": chosen.steady_n if chosen else "",
-        "least_work_run_m": a.at_min.run_m if a.at_min else "",
-        "least_work_J": a.at_min.work_j if a.at_min else "",
+        "acceleration_mps2": limits.acceleration_mps2,
+        "feasible_interval_exists": a.feasible, "reason": a.reason,
+        "proposed_run_m": proposed.run_m if proposed else "",
+        "proposed_angle_deg": proposed.angle_deg if proposed else "",
+        "proposed_length_m": proposed.length_m if proposed else "",
+        "proposed_steady_N": proposed.steady_n if proposed else "",
+        "proposed_peak_N": proposed.peak_n if proposed else "",
+        "proposed_work_J": proposed.work_j if proposed else "",
+        "proposed_feasible": proposed.feasible if proposed else "",
+        "proposed_status": proposed.status if proposed else "",
+        "shortest_feasible_run_m": a.x_required_m if a.feasible else "",
+        "least_force_run_m": best_force.run_m if best_force else "",
+        "least_steady_force_N": best_force.steady_n if best_force else "",
+        "least_force_work_J": best_force.work_j if best_force else "",
+        "least_work_run_m": best_work.run_m if best_work else "",
+        "least_work_steady_N": best_work.steady_n if best_work else "",
+        "least_work_J": best_work.work_j if best_work else "",
+        "steady_force_saved_vs_proposed_N": saved if saved is not None else "",
+        "steady_force_reduction_vs_proposed_pct": pct if pct is not None else "",
+        "least_force_work_change_vs_proposed_J":
+            best_force.work_j - proposed.work_j if best_force and proposed else "",
+        "least_work_saved_vs_proposed_J":
+            proposed.work_j - best_work.work_j if best_work and proposed else "",
         "theoretical_model_only": "YES", "actual_observed_force_N": "",
         "external_reference_source": "", "researcher_notes": "",
     }
-    with open(path, "w", newline="", encoding="utf-8-sig") as file:
-        writer = csv.DictWriter(file, fieldnames=list(row))
+    with open(path, "w", newline="", encoding="utf-8-sig") as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(row))
         writer.writeheader()
         writer.writerow(row)
+
  
  
 def compare_references(path: str | Path) -> list[dict]:
